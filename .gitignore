@@ -180,3 +180,5 @@ wandb/
 pretrained_models/
 hparam_search/
 lerobotlike_datasets/
+evaluation_results/
+evaluation_results/*

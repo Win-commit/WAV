@@ -18,15 +18,15 @@ def load_data(data_path, key="action"):
 
 
 def cal_statistic(data, _filter=True):
+    q99 = np.percentile(data, 99, axis=0)
+    q01 = np.percentile(data,  1, axis=0)
     if _filter:
-        q99 = np.percentile(data, 99, axis=0)
-        q01 = np.percentile(data,  1, axis=0)
         data_mask = (data>=q01) & (data <= q99)
         data_mask = data_mask.min(axis=1)
         data = data[data_mask, :]
     means = np.mean(data, axis=0)
     stds = np.std(data, axis=0)
-    return means, stds
+    return means, stds, q99, q01
 
 
 def get_statistics(data_root, data_name, data_type, save_path, action_key="action", state_key="observation.state", value_key="state_value", nrnd=50000, _filter=True,):
@@ -54,19 +54,19 @@ def get_statistics(data_root, data_name, data_type, save_path, action_key="actio
 
     data_list = np.concatenate(data_list, axis=0)
     assert(len(data_list.shape)==2)
-    means, stds = cal_statistic(data_list, _filter=_filter)
+    means, stds, q99, q01 = cal_statistic(data_list, _filter=_filter)
 
     delta_data_list = np.concatenate(delta_data_list, axis=0)
     assert(len(delta_data_list.shape)==2)
-    delta_means, delta_stds = cal_statistic(delta_data_list, _filter=_filter)
+    delta_means, delta_stds,delta_q99, delta_q01 = cal_statistic(delta_data_list, _filter=_filter)
 
     state_list = np.concatenate(state_list, axis=0)
     assert(len(state_list.shape)==2)
-    state_means, state_stds = cal_statistic(state_list, _filter=_filter)
+    state_means, state_stds, state_q99, state_q01 = cal_statistic(state_list, _filter=_filter)
 
     value_list = np.concatenate(value_list, axis=0)
     assert(len(value_list.shape)==2)
-    value_means, value_stds = cal_statistic(value_list, _filter=_filter)
+    value_means, value_stds, value_q99, value_q01 = cal_statistic(value_list, _filter=_filter)
 
 
     ### example:
@@ -100,22 +100,29 @@ def get_statistics(data_root, data_name, data_type, save_path, action_key="actio
     statistics_info = dict({
         data_name+"_"+data_type:dict({
             "mean": means.tolist(),
-            "std": stds.tolist()
+            "std": stds.tolist(),
+            "q99": q99.tolist(),
+            "q01": q01.tolist(),
         }),
         data_name+"_delta_"+data_type:dict({
             "mean": delta_means.tolist(),
-            "std": delta_stds.tolist()
+            "std": delta_stds.tolist(),
+            "q99": delta_q99.tolist(),
+            "q01": delta_q01.tolist(),
         }),
         data_name+"_state_"+data_type:dict({
             "mean": state_means.tolist(),
-            "std": state_stds.tolist()
+            "std": state_stds.tolist(),
+            "q99": state_q99.tolist(),
+            "q01": state_q01.tolist(),
         }),
         data_name+"_value_"+data_type:dict({
             "mean": value_means.tolist(),
-            "std": value_stds.tolist()
+            "std": value_stds.tolist(),
+            "q99":value_q99.tolist(),
+            "q01":value_q01.tolist(),
         }),
     })
-
 
     # if os.path.exists(save_path):
     #     with open(save_path, "r") as f:

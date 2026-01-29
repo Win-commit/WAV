@@ -295,7 +295,7 @@ class Trainer:
         cond_models = load_condition_models(
             tokenizer_class, textenc_class,
             self.args.pretrained_model_name_or_path if not hasattr(self.args, "tokenizer_pretrained_model_name_or_path") else self.args.tokenizer_pretrained_model_name_or_path,
-            load_weights=self.args.load_weights
+            load_weights=True
         )
         self.tokenizer, text_encoder = cond_models["tokenizer"], cond_models["text_encoder"]
         self.text_encoder = text_encoder.to(device, dtype=dtype).eval()
@@ -614,7 +614,10 @@ class Trainer:
                     if self.args.return_action:
                         if getattr(self.args, "add_state", False):
                             # NOTE add states from the batch:
-                            act_state = batch['state'].to(accelerator.device, dtype=weight_dtype).contiguous()
+                            act_state = batch['state']
+                            if act_state.shape[1] != 1:
+                                act_state = act_state[:, mem_size-1:mem_size]
+                            act_state = act_state.to(accelerator.device, dtype=weight_dtype).contiguous()
                         else:
                             act_state = None
 
@@ -867,13 +870,10 @@ class Trainer:
             unwrap_model(accelerator, self.diffusion_model) if accelerator is not None else self.diffusion_model
         )
 
-        if image is None:
-            batch = next(iter(self.val_dataloader))
-            image = batch['video'][:,:,:,:self.args.data['train']['n_previous']]  # shape b,c,v,t,h,w
-            prompt = batch['caption']
-            gt_video = batch['video']
-        else:
-            image = rearrange(image, '(b v) c t h w -> b c v t h w', v=n_view)
+        batch = next(iter(self.val_dataloader))
+        image = batch['video'][:,:,:,:self.args.data['train']['n_previous']].clone()  # shape b,c,v,t,h,w 
+        prompt = batch['caption']
+        gt_video = batch['video']
         b, c, v, t, h, w = image.shape
         negative_prompt = ''
 
@@ -886,6 +886,9 @@ class Trainer:
 
         if self.args.return_action and getattr(self.args, "add_state", False):
             history_action_state = batch['state'][:batch_size]
+            if history_action_state.shape[1] > 1:
+                history_action_state = history_action_state[:, self.args.data['train']['n_previous']-1:self.args.data['train']['n_previous'], :]
+            history_action_state = history_action_state.contiguous()
         else:
             history_action_state = None
 
@@ -915,22 +918,21 @@ class Trainer:
             value_dim=self.args.diffusion_model["config"]["value_in_channels"],
         )[0]
 
-        if cap is None:
-            cap = 'Validation'
-            save_video(rearrange(gt_video[0].data.cpu(), 'c v t h w -> c t h (v w)', v=n_view), os.path.join(model_save_dir, f'{cap}_gt.mp4'), fps=(self.args.data['train']['chunk']-1)//self.TEMPORAL_DOWN_RATIO+1)
+        cap = 'Validation'
+        fps = int(getattr(self.args, "basic_fps", 30) / (self.args.data['train']['action_chunk'] // self.args.data['train']['chunk']))
+        save_video(rearrange(gt_video[0].data.cpu(), 'c v t h w -> c t h (v w)', v=n_view), os.path.join(model_save_dir, f'{cap}_gt.mp4'), fps=fps)
 
         if self.args.return_video:
             video = preds['video'].data.cpu()
-            save_video(rearrange(video, '(b v) c t h w -> b c t h (v w)', v=n_view)[0], os.path.join(model_save_dir, f'{cap}.mp4'), fps=(self.args.data['train']['chunk']-1)//self.TEMPORAL_DOWN_RATIO+1)
+            save_video(rearrange(video, '(b v) c t h w -> b c t h (v w)', v=n_view)[0], os.path.join(model_save_dir, f'{cap}.mp4'), fps=fps)
 
         if to_log:
             self.writer.add_text(f'step_{global_step}/{cap} prompt:', prompt[0], global_step)
 
         if self.args.return_action:
             # shape t, c
-            if gt_actions is None:
-                gt_actions = batch['actions'][:, -self.args.data['train']['action_chunk']:]
-                action_dim = gt_actions.shape[-1]
+            gt_actions = batch['actions'][:, -self.args.data['train']['action_chunk']:]
+            action_dim = gt_actions.shape[-1]
 
             action_logs = act_metric(
                 preds['action'][:,:,:action_dim].detach().cpu().to(torch.float).numpy()[:batch_size],

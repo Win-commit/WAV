@@ -780,6 +780,7 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
         pixel_wise_timestep: bool = True,
         n_chunk: int = 1,
         explore_config: dict = None,
+        show_progress: bool = False,
         **kwargs,
     ):
         r"""
@@ -1087,6 +1088,8 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
             
                 
 
+            if not show_progress:
+                self.set_progress_bar_config(disable=True)
             with self.progress_bar(total=num_inference_steps) as progress_bar:
                 
                 for i, t in enumerate(timesteps):

@@ -245,7 +245,7 @@ class AgiBotWorld(Dataset):
         indexes = np.clip(indexes, a_min=1, a_max=total_frames-1).tolist()
         video_end = indexes[-self.action_chunk:]
         mem_candidates = [
-            indexes[int(i)] for i in range(0, self.sample_n_frames-self.action_chunk-1)
+            indexes[int(i)] for i in range(0, self.sample_n_frames-self.action_chunk)
         ]
         if self.previous_pick_mode == 'uniform':
             mem_indexes = [mem_candidates[int(i)] for i in np.linspace(0, len(mem_candidates)-1, self.n_previous).tolist()]
@@ -296,6 +296,9 @@ class AgiBotWorld(Dataset):
             action = torch.FloatTensor(action)
             action = (action - act_meanv) / act_stdv
             rel_action = action - state
+            ### keep current effector action
+            rel_action[:, 6] = action[:, 6]
+            rel_action[:, 13] = action[:, 13]
             return rel_action, state
 
         else:
@@ -305,7 +308,7 @@ class AgiBotWorld(Dataset):
     def seek_mp4(self, video_root, cam_name_list, slices):
         """
         seek video frames according to the input slices;
-        output video shape: (c,v,t,h,w)
+        output a list of videos
         """
         video_list = []
         for cam_name in cam_name_list:
@@ -318,7 +321,6 @@ class AgiBotWorld(Dataset):
             video = video.float()/255.
             video_reader.close()
             video_list.append(video)
-        video_list = torch.stack(video_list, dim=1)
         return video_list
 
 
@@ -359,11 +361,12 @@ class AgiBotWorld(Dataset):
         """
         crop (optional) and resize the videos, and modify the intrinsic accordingly
         """
-        c, v, t, h, w = videos.shape
+        v = len(videos)
         new_videos = []
         new_intrinsics = []
         for iv in range(v):
-            video = videos[:, iv]
+            video = videos[iv]
+            c, t, h, w = video.shape
             if self.random_crop:
                 h_start, w_start, h_crop, w_crop = gen_crop_config(video)
                 video = video[:,:,h_start:h_start+h_crop,w_start:w_start+w_crop]

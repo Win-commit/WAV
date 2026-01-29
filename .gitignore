@@ -173,3 +173,10 @@ valid/*
 # custom_configs/
 logs/
 output/
+lrz_training_v2/
+.claude/
+value_vis/
+wandb/
+pretrained_models/
+hparam_search/
+lerobotlike_datasets/

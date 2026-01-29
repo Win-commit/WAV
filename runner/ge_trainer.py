@@ -41,22 +41,25 @@ from accelerate.utils import (
     ProjectConfiguration,
     set_seed,
 )
-
 # ----------------------------------------------------
 from utils.model_utils import load_condition_models, load_latent_models, load_vae_models, load_diffusion_model, count_model_parameters, unwrap_model
 from utils.model_utils import forward_pass
 from utils.optimizer_utils import get_optimizer
 from utils.memory_utils import get_memory_statistics, free_memory
-
+from utils.dreamer_style_loss import (
+    symlog,
+    build_twohot_bins,
+    twohot_encode
+)
 # ----------------------------------------------------
 from torch.utils.tensorboard import SummaryWriter
-from utils import init_logging, import_custom_class, save_video
+from utils import init_logging, import_custom_class, save_video, zero_rank_print
 
 # ----------------------------------------------------
 from utils.data_utils import get_latents, get_text_conditions, gen_noise_from_condition_frame_latent, randn_tensor, apply_color_jitter_to_video
 
 # ----------------------------------------------------
-from utils.extra_utils import act_metric
+from utils.extra_utils import act_metric, value_metric
 
 LOG_LEVEL = "INFO"
 # LOG_LEVEL = "DEBUG"
@@ -317,8 +320,8 @@ class Trainer:
                 self.vae.enable_slicing()
             if self.args.enable_tiling:
                 self.vae.enable_tiling()
-        self.SPATIAL_DOWN_RATIO = self.vae.spatial_compression_ratio
-        self.TEMPORAL_DOWN_RATIO = self.vae.temporal_compression_ratio
+        self.SPATIAL_DOWN_RATIO = self.vae.spatial_compression_ratio #32
+        self.TEMPORAL_DOWN_RATIO = self.vae.temporal_compression_ratio #8
         logger.info(f'SPATIAL_DOWN_RATIO of VAE :{self.SPATIAL_DOWN_RATIO}')
         logger.info(f'TEMPORAL_DOWN_RATIO of VAE :{self.TEMPORAL_DOWN_RATIO}')
 
@@ -406,7 +409,21 @@ class Trainer:
                     param.requires_grad = False
         elif train_mode == "video_only":
             for name, param in self.diffusion_model.named_parameters():
-                if 'action_' not in name:
+                if 'action_' not in name and 'value_' not in name:
+                    param.requires_grad = True
+                    diffusion_model_trainable_params.append(param)
+                else:
+                    param.requires_grad = False
+        elif train_mode == "value_only":
+            for name, param in self.diffusion_model.named_parameters():
+                if 'value_' in name:
+                    param.requires_grad = True
+                    diffusion_model_trainable_params.append(param)
+                else:
+                    param.requires_grad = False
+        elif train_mode == "value_action":
+            for name, param in self.diffusion_model.named_parameters():
+                if 'action_' in name or 'value_' in name:
                     param.requires_grad = True
                     diffusion_model_trainable_params.append(param)
                 else:
@@ -442,9 +459,11 @@ class Trainer:
         )
 
         num_update_steps_per_epoch = math.ceil(len(self.train_dataloader) / self.args.gradient_accumulation_steps)
-        if self.state.train_steps is None:
-            self.state.train_steps = self.state.train_epochs * num_update_steps_per_epoch
-            self.state.overwrote_max_train_steps = True
+        max_steps_from_epochs = self.state.train_epochs * num_update_steps_per_epoch
+
+        # total training step is decided by the minimum of train_steps and train_epochs
+        self.state.train_steps = min(self.args.train_steps, max_steps_from_epochs)
+        self.state.overwrote_max_train_steps = True
 
         lr_scheduler = get_scheduler(
             name=self.args.lr_scheduler,
@@ -543,7 +562,6 @@ class Trainer:
 
                     # get the shape params
                     _, _, raw_frames, raw_height, raw_width = future_video.shape
-
                     latent_frames = raw_frames // self.TEMPORAL_DOWN_RATIO + 1 + mem_size
                     latent_height = raw_height // self.SPATIAL_DOWN_RATIO
                     latent_width = raw_width // self.SPATIAL_DOWN_RATIO
@@ -599,14 +617,14 @@ class Trainer:
                             act_state = batch['state'].to(accelerator.device, dtype=weight_dtype).contiguous()
                         else:
                             act_state = None
-                            
+
 
                         actions = batch['actions'][:, -self.args.data['train']['action_chunk']:].to(accelerator.device, dtype=weight_dtype).contiguous()   # shape b,t,c
                         action_dim = actions.shape[-1]
 
                         noise_actions = randn_tensor(actions.shape, device=accelerator.device, dtype=weight_dtype)
 
-                        # here we get action_timesteps, shape (b,) originally, target shape (b, l) 
+                        # here we get action_timesteps, shape (b,) originally, target shape (b, l)
                         action_timesteps = action_timesteps.unsqueeze(-1).repeat(1, actions.shape[1])
                         action_ss= action_sigmas.reshape(-1, 1, 1).repeat(1, 1, actions.shape[-1])
 
@@ -621,6 +639,48 @@ class Trainer:
                         noisy_actions = None
                         act_state = None
 
+                    if self.args.return_value:
+                        value_chunk = self.args.data['train']['action_chunk'] if self.args.data['train'].get("value_dense", False) else self.args.data['train']['chunk']
+                        values = batch['value_targets'][:, -value_chunk:].to(accelerator.device, dtype=weight_dtype).contiguous()  # shape b,t,c
+                        
+                        # state_value = values[..., -1]  # shape b,t
+
+                        symlog_values = symlog(values)  # shape b,t,c
+                        # value_bins = build_twohot_bins(num_bins = self.args.diffusion_model['config'].get("value_in_channels",21))
+
+                        # values_twohot = torch.stack([
+                        #     twohot_encode(state_value_symlog[i], value_bins)
+                        #     for i in range(state_value_symlog.size(0))
+                        # ])  # shape b,t,num_bins
+
+                        value_weights = compute_density_for_timestep_sampling(
+                            weighting_scheme=self.args.flow_weighting_scheme,
+                            batch_size=batch_size,
+                            logit_mean=self.args.flow_logit_mean,
+                            logit_std=self.args.flow_logit_std,
+                            mode_scale=self.args.flow_mode_scale,
+                        )
+                        value_indices = (value_weights * self.scheduler.config.num_train_timesteps).long()
+                        value_sigmas = scheduler_sigmas[value_indices]
+                        value_timesteps = (value_sigmas * 1000.0).long()
+                        value_timesteps = value_timesteps.unsqueeze(-1).repeat(1, symlog_values.shape[1])
+
+                        noise_values = randn_tensor(symlog_values.shape, device=accelerator.device, dtype=weight_dtype)
+                        value_ss = value_sigmas.reshape(-1, 1, 1).repeat(1, 1, symlog_values.shape[-1])
+                        
+                        if self.args.return_action:
+                            value_ss = torch.full_like(value_ss, 1.0)
+
+                        noisy_values = (1.0 - value_ss) * symlog_values + value_ss * noise_values
+
+                        value_weights = compute_loss_weighting_for_sd3(
+                            weighting_scheme=self.args.flow_weighting_scheme, sigmas=value_sigmas
+                        ).reshape(-1, 1, 1).repeat(1, 1, symlog_values.size(-1))
+                    else:
+                        noisy_values = None
+                        symlog_values = None  
+                        value_timesteps = None
+
                     # shape:  bv, l, c and bv, l
                     noise, conditioning_mask, cond_indicator = gen_noise_from_condition_frame_latent(
                         mem_latents, latent_frames, latent_height, latent_width, noise_to_condition_frames=self.args.noise_to_first_frame
@@ -634,7 +694,7 @@ class Trainer:
 
                     # shape: bv,1,c
                     ss = sigmas.reshape(-1, 1, 1).repeat(1, 1, latents.size(-1))
-                    if self.args.return_action and self.args.noisy_video:
+                    if (self.args.return_action or self.args.return_value) and self.args.noisy_video:
                         ss = torch.full_like(ss, 1.0)
 
                     noisy_latents = (1.0 - ss) * latents + ss * noise
@@ -645,10 +705,10 @@ class Trainer:
                     ).reshape(-1, 1, 1).repeat(1, 1, latents.size(-1))
 
                     pred_all = forward_pass(
-                        model=self.diffusion_model, 
-                        timesteps=timesteps, 
+                        model=self.diffusion_model,
+                        timesteps=timesteps,
                         noisy_latents=noisy_latents,
-                        prompt_embeds=prompt_embeds, 
+                        prompt_embeds=prompt_embeds,
                         prompt_attention_mask=prompt_attention_mask,
                         num_frames=latent_frames,
                         height=latent_height,
@@ -656,10 +716,14 @@ class Trainer:
                         n_view=n_view,
                         action_states=noisy_actions,
                         action_timestep=action_timesteps,
-                        return_video=self.args.return_video or self.args.return_action,
+                        value_states=noisy_values,
+                        value_timestep=value_timesteps,
+                        return_video=self.args.return_video or self.args.return_action or self.args.return_value,
                         return_action=self.args.return_action,
+                        return_value=self.args.return_value,
                         video_attention_mask=video_attention_mask,
                         history_action_state=act_state,
+                        history_value_state=None,
                         condition_mask=conditioning_mask,
                     )['latents']
 
@@ -675,15 +739,27 @@ class Trainer:
                     else:
                         loss_video = 0.
 
-                    if self.args.train_mode == 'all' or self.args.train_mode == 'action_only' or self.args.train_mode == 'action_full':
+                    if self.args.train_mode == 'all' or self.args.train_mode == 'action_only' or self.args.train_mode == 'action_full' or self.args.train_mode == 'value_action':
                         target_action = noise_actions - actions
                         loss_action = action_weights.float() * (pred_all['action'].float() - target_action.float()).pow(2)    # shape b,l,c
                         loss_action = loss_action.mean()
                     else:
                         loss_action = 0.
-                    action_loss_scale = getattr(self.args, "action_loss_scale", 1.0)
 
-                    loss = loss_video + action_loss_scale * loss_action
+                    if self.args.train_mode == 'all' or self.args.train_mode == 'value_only':
+                        if 'value' in pred_all:
+                            target_value = noise_values - symlog_values
+                            loss_value = value_weights.float() * (pred_all['value'].float() - target_value.float()).pow(2)
+                            loss_value = loss_value.mean()
+                        else:
+                            loss_value = 0.
+                    else:
+                        loss_value = 0.
+
+                    action_loss_scale = getattr(self.args, "action_loss_scale", 1.0)
+                    value_loss_scale = getattr(self.args, "value_loss_scale", 1.0)
+
+                    loss = loss_video + action_loss_scale * loss_action + value_loss_scale * loss_value
 
                     assert torch.isnan(loss) == False, "NaN loss detected"
                     accelerator.backward(loss)
@@ -696,10 +772,12 @@ class Trainer:
                 
 
                 loss = accelerator.reduce(loss.detach(), reduction='mean')
-                if self.args.train_mode == 'all' or self.args.train_mode == 'action_only' or self.args.train_mode == 'action_full':
+                if self.args.train_mode == 'all' or self.args.train_mode == 'action_only' or self.args.train_mode == 'action_full' or self.args.train_mode == 'value_action':
                     loss_action = accelerator.reduce(loss_action.detach(), reduction='mean')
                 if self.args.train_mode == 'all' or self.args.train_mode == 'video_only':
                     loss_video = accelerator.reduce(loss_video.detach(), reduction='mean')
+                if self.args.train_mode == 'all' or self.args.train_mode == 'value_only':
+                    loss_value = accelerator.reduce(loss_value.detach(), reduction='mean')
 
                 running_loss += loss.item()
 
@@ -781,6 +859,9 @@ class Trainer:
 
         os.makedirs(model_save_dir,exist_ok=True)
 
+        # Build bins for value decoding
+        # value_bins = build_twohot_bins(num_bins=self.args.diffusion_model['config'].get("value_in_channels", 21))
+
         pipe = self.pipeline_class(
             self.scheduler, self.vae, self.text_encoder, self.tokenizer,
             unwrap_model(accelerator, self.diffusion_model) if accelerator is not None else self.diffusion_model
@@ -788,7 +869,7 @@ class Trainer:
 
         if image is None:
             batch = next(iter(self.val_dataloader))
-            image = batch['video'][:,:,:,:self.args.data['train']['n_previous']]  # shape b,c,v,t,h,w 
+            image = batch['video'][:,:,:,:self.args.data['train']['n_previous']]  # shape b,c,v,t,h,w
             prompt = batch['caption']
             gt_video = batch['video']
         else:
@@ -820,6 +901,8 @@ class Trainer:
             width=w,
             n_view=v,
             return_action=self.args.return_action,
+            return_value=self.args.return_value,
+            value_chunk=(self.args.data['train']['action_chunk'] if self.args.data['train'].get("value_dense", False) else self.args.data['train']['chunk']),
             n_prev=self.args.data['train']['n_previous'],
             chunk=(self.args.data['train']['chunk']-1)//self.TEMPORAL_DOWN_RATIO+1,
             return_video=self.args.return_video,
@@ -829,6 +912,7 @@ class Trainer:
             pixel_wise_timestep = self.args.pixel_wise_timestep,
             n_chunk=n_chunk,
             action_dim=self.args.diffusion_model["config"]["action_in_channels"],
+            value_dim=self.args.diffusion_model["config"]["value_in_channels"],
         )[0]
 
         if cap is None:
@@ -857,5 +941,27 @@ class Trainer:
 
             if to_log:
                 for key, value in action_logs.items():
+                    self.writer.add_scalar(key, value, global_step)
+
+        if self.args.return_value:
+            value_chunk = (self.args.data['train']['action_chunk'] if self.args.data['train'].get("value_dense", False) else self.args.data['train']['chunk'])
+            
+            gt_values = batch['value_targets'][:, -value_chunk:]  # shape b, t, c extract only last dimension (actual value)
+
+            # Get predicted value (twohot logits)
+            pd_values = preds['value'][:batch_size]  # shape b, t, c
+
+            # Compute value metrics
+            value_logs = value_metric(
+                pd_values.detach().cpu().to(torch.float),
+                gt_values.detach().cpu().to(torch.float),
+                prefix=f'{cap}_step_{global_step}',
+                start_stop_interval=[(0,1),(1,9),(9,25),(25,value_chunk)],
+                save_plot=True,
+                plot_dir=model_save_dir
+            )
+
+            if to_log:
+                for key, value in value_logs.items():
                     self.writer.add_scalar(key, value, global_step)
 

@@ -32,6 +32,7 @@ class MVActorServer(MVActor):
             self._port,
             compression=None,
             max_size=None,
+            ping_interval=None,
             process_request=_health_check,
         ) as server:
             await server.serve_forever()
@@ -61,7 +62,6 @@ class MVActorServer(MVActor):
                 ###     obs    : images, 
 
                 action = self.play(**obs)
-
                 action = dict(actions=action,)
 
                 infer_time = time.monotonic() - infer_time

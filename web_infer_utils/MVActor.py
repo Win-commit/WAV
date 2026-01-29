@@ -21,7 +21,7 @@ import os
 import pdb
 import random
 from datetime import datetime
-
+import json
 import cv2
 import numpy as np
 import torch
@@ -85,7 +85,6 @@ class MVActor:
 
 
         self.dtype = torch.bfloat16
-        self.device = "cuda"
         self.prepare_models()
 
         state_statistic_name = domain_name + "_" + "state" + "_" + self.action_space
@@ -95,7 +94,7 @@ class MVActor:
             action_statistic_name = domain_name + "_" + self.action_space
 
         self.StatisticInfo = StatisticInfo
-        if get(self.args.data['val'], 'stat_file', None) is not None:
+        if self.args.data['val'].get('stat_file', None) is not None:
             with open(self.args.data['val']['stat_file'], "r") as f:
                 self.StatisticInfo = json.load(f)
 
@@ -121,6 +120,11 @@ class MVActor:
         self.num_inference_steps = args.num_inference_steps
 
         self.reset()
+
+        # 添加显存监控计数器
+        self.inference_count = 0
+        self.memory_cleanup_interval = 15  # 每10次推理清理一次显存
+        self.last_memory_cleanup_count = 0
 
 
     def prepare_models(self,):
@@ -207,17 +211,18 @@ class MVActor:
         )
 
     @torch.no_grad()
-    def play(self, obs, prompt, idx=0, num_inference_steps=5, noise_scale=0.03, execution_step=1, state=None):
+    def play(self, obs, prompt, idx=0, num_inference_steps=5, noise_scale=0.03, execution_step=1, state=None, explore_config=None):
         """
         obs: One of the followings
             1. torch.tensor of shape: {v, 3, h, w}, ranging from -1 to 1
             2. np.array of shape: {v, h, w, 3}, ranging from 0 to 255 (np.uin8)
         prompt: task description
         execution_step: excution step of the past play
+        explore_config: dict, 超参数配置字典
         return the raw action
         """
         print(">>>>>>>>execution_step: ", execution_step)
-        assert execution_step >= 1 and execution_step <= 100, "execution_step should be in [1, 100]"
+        assert execution_step >= 0 and execution_step <= 100, "execution_step should be in [1, 100]"
 
 
         if obs.dtype == np.uint8:
@@ -243,13 +248,14 @@ class MVActor:
         else:
             history_action_state = None
 
+        if execution_step == 0:
+                return self.action_buffer.data.float().cpu().numpy()
+        
         if not self.obs:
             self.obs = [obs] * self.n_prev
             self.count = self.threshold - 1
             self.buffer = [self.obs[-1]]
         else:
-            if execution_step == 0:
-                return self.action_buffer
             self.count += execution_step
             if self.count >= self.threshold:
                 self.count = 0
@@ -280,20 +286,24 @@ class MVActor:
             width=w,
             n_view=v,
             return_action=True,
-            return_video=False,
+            return_value=self.args.return_value,
+            return_video=self.args.return_video,
+            exploration=self.args.exploration,
             chunk=self.chunk,
             action_chunk=self.action_chunk,
+            value_chunk=(self.action_chunk if self.args.data['train'].get("value_dense", False) else self.args.data['train']['chunk']),
             history_action_state=history_action_state if self.add_state else None,
             noise_seed=42,
             pixel_wise_timestep = self.args.pixel_wise_timestep,
             n_chunk=1,
             return_dict=False,
             action_dim=self.args.diffusion_model["config"]["action_in_channels"],
+            value_dim=self.args.diffusion_model["config"]["value_in_channels"],
+            explore_config=explore_config,
         )[0]
 
         ### 1,t,c
         actions_pred = pred_all["action"].detach().cpu()
-
         ### original state: 1,1,C
         state = torch.from_numpy(state).unsqueeze(dim=0).unsqueeze(dim=0)
 
@@ -316,7 +326,6 @@ class MVActor:
             ### delta_act = norm(delta_act)
             ### infer:
             ### cumsum(denorm(output)
-            
             final_actions_pred = actions_pred[:, :execution_step, :] * self.act_std + self.act_mean
             ### left arm
             final_actions_pred[:, :, :arm_dim] = torch.cumsum(final_actions_pred[:, :, :arm_dim], dim=1) + state[:, :, :arm_dim]
@@ -344,9 +353,16 @@ class MVActor:
         ### T, C
         final_actions_pred = final_actions_pred[0]
 
+         ### save action buffer
         self.action_buffer = final_actions_pred.clone()
 
-        return final_actions_pred.data.cpu().numpy()
+        # 增加推理计数并定期清理显存
+        self.inference_count += 1
+        if self.inference_count - self.last_memory_cleanup_count >= self.memory_cleanup_interval:
+            self._cleanup_memory()
+            self.last_memory_cleanup_count = self.inference_count
+
+        return final_actions_pred.data.float().cpu().numpy()
 
 
     def reset(self):
@@ -355,6 +371,12 @@ class MVActor:
         self.action_buffer = torch.zeros(self.action_chunk, self.action_dim, dtype=torch.bfloat16)
         self.cur_step = 0
 
+    def _cleanup_memory(self):
+        """清理 CUDA 显存"""
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            print(f"[Memory Cleanup] Cleared CUDA cache after {self.inference_count} inferences")
 
     def change_step(self, pb_pred):
         return pb_pred.median() >= 0.99

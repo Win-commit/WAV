@@ -12,6 +12,7 @@ domain_name=${5}
 echo "Inference on 1 Nodes, 1 GPUs"
 torchrun --nnodes=1 \
     --nproc_per_node=1 \
+    --master_port=12345 \
     --node_rank=0 \
     $script_path \
     --runner_class_path runner/ge_inferencer.py \
@@ -21,6 +22,6 @@ torchrun --nnodes=1 \
     --checkpoint_path $ckp_path \
     --output_path $output_path \
     --n_validation 1 \
-    --n_chunk_action 10 \
+    --n_chunk_action 7 \
     --domain_name $domain_name
 

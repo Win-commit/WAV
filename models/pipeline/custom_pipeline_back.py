@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import time
 import numpy as np
 import torch
-from tqdm import tqdm
+
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.image_processor import PipelineImageInput
 from diffusers.loaders import FromSingleFileMixin
@@ -563,183 +563,6 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
 
 
     @torch.no_grad()
-    def explore_find(self, video_generate_config:Dict, value_generate_config:Dict, explore_config:Dict, scheduler_config:Dict, infer_params:Dict, **kwargs):
-        # Prepare value scheduler
-        value_scheduler = FlowMatchEulerDiscreteScheduler()
-        sigmas = scheduler_config.get("sigmas", None)
-        mu = scheduler_config.get("mu", None)
-        device = scheduler_config.get("device", None)
-        timesteps = scheduler_config.get("timesteps", None)
-        
-        
-        #MCP process:
-        video_noise_mean = 0
-        video_noise_std = 1
-        value_noise_mean = 0
-        value_noise_std = 1
-
-        # video noise params
-        latent_num_frames = video_generate_config["latent_num_frames"]
-        n_prev = video_generate_config.get("n_prev", 4)
-        latent_height = video_generate_config["latent_height"]
-        latent_width = video_generate_config["latent_width"]
-        video_generator = video_generate_config.get("generator", None)
-
-        for _ in tqdm(range(explore_config.get("explore_steps",10)), desc="Exploration Steps"):
-            init_latents = video_generate_config["init_latents"].repeat(explore_config.get("dynamic_groups",25),1,1,1,1)
-            latents, conditioning_mask, cond_indicator = gen_noise_from_condition_frame_latent(
-                init_latents, latent_num_frames, latent_height, latent_width, video_generator, noise_to_condition_frames=0, noise_mean=video_noise_mean, noise_std=video_noise_std
-            )
-            # Dynamic exploration preparation
-            if self.do_classifier_free_guidance:
-                conditioning_mask = torch.cat([conditioning_mask, conditioning_mask], dim=0)
-
-            prompt_embeds = infer_params["prompt_embeds"]
-            prompt_embeds = prompt_embeds.repeat(explore_config.get("dynamic_groups",25),1,1)
-            prompt_attention_mask = infer_params["prompt_attention_mask"]
-            prompt_attention_mask = prompt_attention_mask.repeat(explore_config.get("dynamic_groups",25),1)
-
-            rope_interpolation_scale = infer_params["rope_interpolation_scale"]
-            attention_kwargs = infer_params["attention_kwargs"]
-            n_view = infer_params.get("n_view", 3)
-            video_attention_mask = infer_params.get("video_attention_mask", None)
-            pixel_wise_timestep = infer_params.get("pixel_wise_timestep", True)
-            latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents.clone()
-            latent_model_input = latent_model_input.to(prompt_embeds.dtype)
-            
-            timestep = timesteps[0].expand(latent_model_input.shape[0])
-            if pixel_wise_timestep:
-                # shape: bv, thw
-                timestep = timestep.unsqueeze(-1) * (1 - conditioning_mask)
-            else:
-                # shape: bv, t
-                timestep = timestep.unsqueeze(-1) * (1 - cond_indicator)
-            
-            # dynamic explore 
-            noise_pred = self.transformer(
-                hidden_states=latent_model_input,
-                encoder_hidden_states=prompt_embeds,
-                timestep=timestep,
-                encoder_attention_mask=prompt_attention_mask,
-                num_frames=latent_num_frames,
-                height=latent_height,
-                width=latent_width,
-                rope_interpolation_scale=rope_interpolation_scale,
-                attention_kwargs=attention_kwargs,
-                return_dict=False,
-                action_states=None,
-                action_timestep=None,       
-                value_states=None,
-                value_timestep=None,
-                return_video=True,
-                return_action=False,
-                return_value=False,
-                n_view=n_view,
-                video_states_buffer=None,
-                store_buffer=True,
-                value_states_buffer=None,
-                value_store_buffer=False,
-                video_attention_mask=video_attention_mask,
-                history_action_state=None,
-                history_value_state=None,
-                condition_mask=conditioning_mask,
-            )[0]
-            video_states_buffer = noise_pred["video_states_buffer"] #[1*group*n_view,l,c] * block_nums
-
-            # Evaluate the quality of Exploration:*value expert
-            value_scheduler.set_timesteps(sigmas=sigmas, mu=mu, device=device)
-            value_chunk = value_generate_config.get("value_chunk", 36)
-            value_dim = value_generate_config.get("value_dim", 17)
-            value_generator = value_generate_config.get("value_generator", None)
-
-            values = randn_tensor((explore_config.get("dynamic_groups",25)*explore_config.get("value_groups",5), value_chunk, value_dim), device=device, dtype=prompt_embeds.dtype, generator=value_generator)
-            values = values * value_noise_std + value_noise_mean
-            values_candidates = values.clone()
-            video_states_buffer = [i.repeat(explore_config.get("value_groups",5),1,1) for i in video_states_buffer]
-
-            for i, t in enumerate(timesteps): 
-                value_timesteps = t.clone()
-                value_timesteps = value_timesteps.unsqueeze(-1).repeat(values.shape[0], values.shape[1])
-                if self.do_classifier_free_guidance:
-                    values_in = torch.cat([values, values])
-                    value_timesteps = torch.cat([value_timesteps, value_timesteps])
-                else:
-                    values_in = values.clone()
-                values_in = values_in.to(prompt_embeds.dtype)
-                
-                noise_pred = self.transformer(
-                    hidden_states=None,
-                    encoder_hidden_states=prompt_embeds,
-                    timestep=None,
-                    encoder_attention_mask=prompt_attention_mask,
-                    num_frames=latent_num_frames,
-                    height=latent_height,
-                    width=latent_width,
-                    rope_interpolation_scale=rope_interpolation_scale,
-                    attention_kwargs=attention_kwargs,
-                    return_dict=False,
-                    action_states=None,
-                    action_timestep=None,       
-                    value_states=values_in,
-                    value_timestep=value_timesteps,
-                    return_video=False,
-                    return_action=False,
-                    return_value=True,
-                    n_view=n_view,
-                    video_states_buffer=video_states_buffer,
-                    store_buffer=False,
-                    value_states_buffer=None,
-                    value_store_buffer=False,
-                    video_attention_mask=video_attention_mask,
-                    history_action_state=None,
-                    history_value_state=None,
-                    condition_mask=conditioning_mask,
-                )[0]
-                if self.do_classifier_free_guidance:
-                    value_noise_pred_uncond, value_noise_pred = noise_pred["value"].float().chunk(2)
-                    value_noise_pred = value_noise_pred_uncond + self.guidance_scale * (value_noise_pred - value_noise_pred_uncond)
-                else:
-                    value_noise_pred = noise_pred["value"].float()
-                values = value_scheduler.step(value_noise_pred, t, values, return_dict=False)[0]
-            # Get winner,Update distribution parameters
-            values = rearrange(values, "(b g) l c -> b g l c", g=explore_config.get("value_groups",5))
-            state_values = values[:,:,:,-1] #b,g,l
-            state_values_mean = state_values.mean(dim=-1)
-            state_values_var = state_values.var(dim=-1)
-            snr = state_values_mean / (state_values_var.sqrt() + 1e-6) #[dynamic_groups,value_groups]
-            # value dist parameters update
-            sigma_decay = explore_config.get("sigma_decay",0.95)
-            alpha_smooth = explore_config.get("alpha_smooth",0.8)
-            snr_flatten = snr.flatten()
-            _, value_elites_idx = torch.topk(snr_flatten, k=explore_config.get("value_elites",32), largest=True)
-            value_elites = values_candidates[value_elites_idx]
-            value_elites_mu = value_elites.mean(dim=0)
-            value_elites_std = value_elites.std(dim=0) * sigma_decay 
-            value_noise_mean = alpha_smooth * value_noise_mean + (1 - alpha_smooth) * value_elites_mu
-            value_noise_std = alpha_smooth * value_noise_std + (1 - alpha_smooth) * value_elites_std
-            #video dist params update
-            snr = snr.max(dim=-1)[0] #[dynamic_groups]
-            _, video_elites_idx = torch.topk(snr, k=explore_config.get("dynamic_elites",8), largest=True)
-            video_elites = latents[video_elites_idx]
-            video_elites = self._unpack_latents(
-                            video_elites,
-                            latent_num_frames,
-                            latent_height,
-                            latent_width,
-                            self.transformer_spatial_patch_size,
-                            self.transformer_temporal_patch_size,
-                        )
-            video_elites_mu = video_elites.mean(dim=0)
-            video_elites_std = video_elites.std(dim=0) * sigma_decay
-            video_noise_mean = alpha_smooth * video_noise_mean + (1 - alpha_smooth) * video_elites_mu
-            video_noise_std = alpha_smooth * video_noise_std + (1 - alpha_smooth) * video_elites_std
-        
-        return video_noise_mean, video_noise_std, value_noise_mean, value_noise_std
-
-
-            
-
-    @torch.no_grad()
     def infer(
         self,
         image: PipelineImageInput = None,
@@ -772,14 +595,12 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
         action_dim: int = 14,
         return_video: bool = True,
         return_value: bool = False,
-        exploration: bool = False,
         value_chunk: int = 8,
         value_dim: int = 21,
         noise_seed: int = None,
         history_action_state: torch.Tensor = None,
         pixel_wise_timestep: bool = True,
         n_chunk: int = 1,
-        explore_config: dict = None,
         **kwargs,
     ):
         r"""
@@ -1017,75 +838,17 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
         else:
             video_generator = generator
         video_attention_mask = None
-
-        video_generator_config = {
-            "init_latents": init_latents,
-            "latent_num_frames": latent_num_frames,
-            "latent_height": latent_height,
-            "latent_width": latent_width,
-            "video_generator": video_generator,
-            "n_prev": n_prev,
-        }
-        value_generator_config = {
-            "value_generator":value_generator if return_value else None,
-            "value_chunk":value_chunk,
-            "value_dim":value_dim,
-        }
-        scheduler_config = {
-            "num_inference_steps":num_inference_steps,
-            "timesteps":timesteps,
-            "sigmas":sigmas,
-            "mu":mu,
-            "device":device,
-        }
-        infer_params = {
-            "prompt_embeds": prompt_embeds,
-            "prompt_attention_mask": prompt_attention_mask,
-            "rope_interpolation_scale": rope_interpolation_scale,
-            "attention_kwargs": attention_kwargs,
-            "n_view": n_view,
-            "video_attention_mask":video_attention_mask,
-            "pixel_wise_timestep": pixel_wise_timestep,
-        }
-
-        if explore_config is None:
-            explore_config = {
-                "explore_steps": 5,
-                "dynamic_groups": 50,
-                "value_groups": 5,
-                "sigma_decay": 0.95,
-                "alpha_smooth": 0.5,
-                "value_elites": 32,
-                "dynamic_elites": 8,
-            }
-
         for i_chunk in range(n_chunk):
 
             video_states_buffer = None
             value_state_buffer = None
+
             latents, conditioning_mask, cond_indicator = gen_noise_from_condition_frame_latent(
-                    init_latents, latent_num_frames, latent_height, latent_width, video_generator, noise_to_condition_frames=0
-                )
-        
-            if return_value and exploration:
-                video_noise_mean, video_noise_std, value_noise_mean, value_noise_std = self.explore_find(
-                    video_generate_config = video_generator_config, 
-                    value_generate_config = value_generator_config,
-                    explore_config = explore_config,
-                    scheduler_config = scheduler_config,
-                    infer_params = infer_params,
-                    )
-                print("DEBUG",video_noise_mean.mean(),video_noise_std.mean(),value_noise_mean.mean(),value_noise_std.mean())
-                latents, conditioning_mask, cond_indicator = gen_noise_from_condition_frame_latent(
-                    init_latents, latent_num_frames, latent_height, latent_width, video_generator, noise_to_condition_frames=0,noise_mean=video_noise_mean, noise_std=video_noise_std
-                )
-                values = randn_tensor((batch_size, value_chunk, value_dim), device=device, dtype=prompt_embeds.dtype, generator=value_generator)
-                values = values * value_noise_std + value_noise_mean
-            
+                init_latents, latent_num_frames, latent_height, latent_width, video_generator, noise_to_condition_frames=0
+            )
+
             if self.do_classifier_free_guidance:
                 conditioning_mask = torch.cat([conditioning_mask, conditioning_mask], dim=0)
-            
-                
 
             with self.progress_bar(total=num_inference_steps) as progress_bar:
                 

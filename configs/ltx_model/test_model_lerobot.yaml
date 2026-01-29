@@ -1,10 +1,10 @@
 model_name: 'ltx_train'
 is_i2v: True
 report_to: wandb
-tracker_name: Phase3_3_PolicyModel_WOvalue_actionOnly
+tracker_name: Phase3_PolicyModel_WOvalue_v2_cv1
 
 logging_dir: logs
-output_dir: lrz_training/Phase3_3_PolicyModel_WOvalue_actionOnly
+output_dir: lrz_training_v2/Phase3_PolicyModel_WOvalue_v2_cv1
 pretrained_model_name_or_path: /liujinxin/zhy/lirunze/Genie-Envisioner/pretrained_models/LTX_video_part
 
 ###
@@ -30,18 +30,18 @@ pipeline_class: CustomPipeline
 
 #
 return_action: true
-return_video: true
+return_video: false
 return_value: false
-train_mode: 'action_only'  # 支持: video_only, action_only, value_only, value_action, all, action_full
+train_mode: 'action_full'  # 支持: video_only, action_only, value_only, value_action, all, action_full
 action_loss_scale: 1.0
 value_loss_scale: 1.0
 
 # total training step is decided by the minimum of the below two
-train_steps: 1000000
-train_epochs: 10000
-steps_to_save: 2000
+train_steps: 100000
+train_epochs: 13000
+steps_to_save: 10000
 steps_to_log: 20
-steps_to_val: 2000
+steps_to_val: 200000000
 
 mixed_precision: bf16
 allow_tf32: False
@@ -56,10 +56,10 @@ enable_tiling: True
 
 add_state: False ### whether add state to the action chunk
 
-caption_dropout_p: 0.06
+caption_dropout_p: 0.00
 
 # dataloader
-batch_size: 8
+batch_size: 16
 dataloader_num_workers: 8
 pin_memory: True
 
@@ -68,7 +68,7 @@ noise_to_first_frame: 0.1
 
 # Optimizer Config
 optimizer: adamw
-lr: 3e-5
+lr: 5e-5
 beta1: 0.9
 beta2: 0.95
 beta3: 0.999
@@ -97,7 +97,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: /liujinxin/zhy/lirunze/Genie-Envisioner/lrz_training/Phase2_1_ValueModel_dense_continuous/2025_12_13_09_39_16/step_18000/diffusion_pytorch_model.safetensors
+  model_path: /liujinxin/zhy/lirunze/Genie-Envisioner/lrz_training/Phase1_VideoAdapter/2025_12_08_09_00_38/step_40000/diffusion_pytorch_model.safetensors
   config:
     activation_fn: gelu-approximate
     attention_bias: true
@@ -127,19 +127,19 @@ data:
 ### more details can be found in data/utils/*_dataset.py
   train:
     data_roots: ["/liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets"]
-    domains: ["robotwin", ]
+    domains: ["robotwin"]
     sample_size: [192, 256]
-    sample_n_frames: 900
+    sample_n_frames: 300
     preprocess :  'resize'
     valid_cam :  ['observation.images.top_head', 'observation.images.hand_left', 'observation.images.hand_right']
     chunk: 9
-    action_chunk: 54
+    action_chunk: 36
     n_previous: 4
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "/liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets/robotwin/.cache/train.json"
-    action_type: "delta"
-    action_space: "absolute"
+    action_type: "absolute"
+    action_space: "joint"
     action_key: "action"
     value_key: "state_value"
     state_key: "observation.state" 
@@ -147,18 +147,18 @@ data:
     stat_file: /liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets/robotwin/meta/stats.json
   val:
     data_roots: ["/liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets"]
-    domains: ["robotwin", ]
+    domains: ["robotwin"]
     sample_size: [192, 256]
-    sample_n_frames: 900
+    sample_n_frames: 300
     preprocess :  'resize'
     valid_cam :  ['observation.images.top_head', 'observation.images.hand_left', 'observation.images.hand_right']
     chunk: 9
-    action_chunk: 54
+    action_chunk: 36
     n_previous: 4
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "/liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets/robotwin/.cache/val.json"
-    action_type: "delta"
+    action_type: "absolute"
     action_space: "joint"
     action_key: "action"
     value_key: "state_value"
@@ -168,7 +168,7 @@ data:
 
 
 use_color_jitter: true
-num_inference_step: 5
+num_inference_step: 10
 noisy_video: true
 
 # false for quick debug, for training set True

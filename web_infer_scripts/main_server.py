@@ -31,11 +31,12 @@ def get_args():
 
     parser.add_argument("--add_state", action="store_true")
     
-    parser.add_argument('--threshold', type=float, default=200, help='The number of steps to update memories')
+    parser.add_argument('--threshold', type=float, default=54, help='The number of steps to update memories')
 
     parser.add_argument('--denoise_step', type=int, default=5)
 
     parser.add_argument('--action_dim', type=int, default=16)
+    parser.add_argument('--device', type=int, default=0)
 
     args = parser.parse_args()
 
@@ -65,7 +66,7 @@ if __name__ == "__main__":
         domain_name=args.domain_name,
         num_inference_steps=args.denoise_step,
         action_dim=args.action_dim,
-        gripper_dim=1,
+        gripper_dim=1, device=args.device
     )
 
     ### init server

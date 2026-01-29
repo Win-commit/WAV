@@ -35,6 +35,8 @@ from utils.model_utils import load_condition_models, load_latent_models, load_va
 from torch.utils.tensorboard import SummaryWriter
 from utils import init_logging, import_custom_class, save_video
 from utils.data_utils import get_latents, get_text_conditions, gen_noise_from_condition_frame_latent, randn_tensor, apply_color_jitter_to_video
+from utils.extra_utils import act_metric, value_metric
+from utils.dreamer_style_loss import build_twohot_bins,symexp
 
 from data.utils.statistics import StatisticInfo
 
@@ -95,7 +97,7 @@ class Inferencer:
 
 
         self.StatisticInfo = StatisticInfo
-        if get(self.args.data['val'], 'stat_file', None) is not None:
+        if self.args.data['val'].get('stat_file', None) is not None:
             with open(self.args.data['val']['stat_file'], "r") as f:
                 self.StatisticInfo = json.load(f)
 
@@ -202,8 +204,10 @@ class Inferencer:
             self.scheduler, self.vae, self.text_encoder, self.tokenizer, self.diffusion_model
         )
 
-        assert(self.args.return_action | self.args.return_video)
+        assert(self.args.return_action | self.args.return_video | self.args.return_value)
 
+        # Build bins for value decoding
+        value_bins = build_twohot_bins(num_bins=self.args.diffusion_model['config'].get("value_in_channels", 21))
 
         if self.args.return_action:
             n_chunk_video = 1
@@ -217,10 +221,10 @@ class Inferencer:
 
         for i_validation in range(n_validation):
             
-            self.val_dataloader.dataset.fix_epiidx = i_validation
+            self.val_dataloader.dataset.fix_epiidx = 1024
 
             if self.args.return_action:
-                self.val_dataloader.dataset.fix_sidx = 100
+                self.val_dataloader.dataset.fix_sidx = 0
                 self.val_dataloader.dataset.fix_mem_idx = [1 for _ in range(self.args.data['train']['n_previous'])]
 
                 pd_actions_arr_all = None
@@ -233,7 +237,6 @@ class Inferencer:
                 total_steps = n_chunk_action * self.args.data["train"]["action_chunk"]
 
             for i_chunk_action in range(n_chunk_action):
-
                 batch = next(iter(self.val_dataloader))
                 image = batch['video'][:,:,:,:self.args.data['train']['n_previous']]  # shape b,c,v,t,h,w 
                 prompt = batch['caption']
@@ -266,15 +269,18 @@ class Inferencer:
                     width=w,
                     n_view=v,
                     return_action=self.args.return_action,
-                    n_prev=self.args.data['train']['n_previous'],
-                    chunk=(self.args.data['train']['chunk']-1)//self.TEMPORAL_DOWN_RATIO+1,
+                    return_value=self.args.return_value,
+                    value_chunk=(self.args.data['val']['action_chunk'] if self.args.data['val'].get("value_dense", False) else self.args.data['val']['chunk']),
+                    n_prev=self.args.data['val']['n_previous'],
+                    chunk=(self.args.data['val']['chunk']-1)//self.TEMPORAL_DOWN_RATIO+1, #2
                     return_video=self.args.return_video,
                     noise_seed=42,
-                    action_chunk=self.args.data['train']['action_chunk'],
+                    action_chunk=self.args.data['val']['action_chunk'],
                     history_action_state = history_action_state,
                     pixel_wise_timestep = self.args.pixel_wise_timestep,
                     n_chunk=n_chunk_video,
                     action_dim=self.args.diffusion_model["config"]["action_in_channels"],
+                    value_dim=self.args.diffusion_model["config"]["value_in_channels"],
                 )[0]
 
                 save_cap = f'Validation_{i_validation}'
@@ -342,12 +348,35 @@ class Inferencer:
                         pd_actions_arr_all = pd_actions_arr
                     else:
                         pd_actions_arr_all = np.concatenate((pd_actions_arr_all, pd_actions_arr), axis=0)
-                    
+
                     if gt_actions_arr_all is None:
                         gt_actions_arr_all = gt_actions_arr
                     else:
                         gt_actions_arr_all = np.concatenate((gt_actions_arr_all, gt_actions_arr), axis=0)
 
+                # Handle value predictions
+                if self.args.return_value:
+                    value_chunk=(self.args.data['val']['action_chunk'] if self.args.data['val'].get("value_dense", False) else self.args.data['val']['chunk'])
+                    gt_values = batch['value_targets'][:, -value_chunk:]  # shape b, t, c
+                    # Extract the last dimension (the actual value to predict)
+                    gt_values = gt_values[..., -1]  # shape b, t
+
+                    # Predicted value (from twohot logits)
+                    pd_values = preds['value'][0].detach().cpu().to(torch.float).numpy()  # shape t, c
+
+                    pd_values_continuous = symexp(torch.from_numpy(pd_values[:,-1])).numpy()
+
+                    # # Convert twohot to continuous
+                    # soft_p_pd = torch.softmax(torch.from_numpy(pd_values), dim=-1)
+                    # pd_values_continuous = soft_p_pd @ value_bins.numpy()  # shape t
+
+                    # If this is the first chunk, initialize arrays
+                    if not hasattr(self, 'pd_values_arr_all'):
+                        self.pd_values_arr_all = pd_values_continuous
+                        self.gt_values_arr_all = gt_values[0].detach().cpu().numpy()  # shape t
+                    else:
+                        self.pd_values_arr_all = np.concatenate((self.pd_values_arr_all, pd_values_continuous), axis=0)
+                        self.gt_values_arr_all = np.concatenate((self.gt_values_arr_all, gt_values[0].detach().cpu().numpy()), axis=0)
 
                 image = None
 
@@ -389,6 +418,53 @@ class Inferencer:
                 
                 plt.savefig(f'{self.save_folder}/openloop_evaluation_val{i_validation}.png', dpi=300, bbox_inches='tight')
                 plt.clf()
+
+            # Plot value predictions if enabled
+            if self.args.return_value:
+                if hasattr(self, 'pd_values_arr_all') and hasattr(self, 'gt_values_arr_all'):
+                    x_axis = np.arange(len(self.gt_values_arr_all))
+
+                    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+
+                    # Plot the continuous value sequences
+                    ax.plot(x_axis, self.gt_values_arr_all, label='Ground Truth', color='cornflowerblue', alpha=0.9)
+                    ax.plot(x_axis, self.pd_values_arr_all, label='Inferred', color='tomato', linestyle='--', alpha=0.9)
+
+                    # Mark the starting point of each inference sequence
+                    start_indices = np.arange(0, len(self.gt_values_arr_all), self.args.data["val"]["action_chunk"] if self.args.data['val'].get("value_dense", False) else self.args.data["val"]["chunk"])
+
+                    ax.scatter(start_indices, self.gt_values_arr_all[start_indices], c='blue', marker='o', s=40, zorder=5, label='GT Start')
+                    ax.scatter(start_indices, self.pd_values_arr_all[start_indices], c='darkred', marker='x', s=40, zorder=5, label='Inferred Start')
+
+                    ax.set_title(f'Value Prediction Comparison')
+                    ax.set_ylabel('Value')
+                    ax.set_xlabel('Timestep')
+                    ax.grid(True, linestyle=':', alpha=0.6)
+                    ax.legend()
+
+                    fig.suptitle(f'Comparison of Ground Truth and Inferred Values', fontsize=18)
+
+                    plt.tight_layout(rect=[0, 0, 1, 0.98])
+                    plt.savefig(f'{self.save_folder}/value_evaluation_val{i_validation}.png', dpi=300, bbox_inches='tight')
+                    plt.clf()
+
+                    # Compute value metrics
+                    # value_logs = value_metric(
+                    #     torch.from_numpy(self.pd_values_arr_all).unsqueeze(0),  # add batch dim
+                    #     torch.from_numpy(self.gt_values_arr_all).unsqueeze(0),  # add batch dim
+                    #     value_bins,
+                    #     prefix=f'val{i_validation}',
+                    #     start_stop_interval=[(0,1),(1,9),(9,25),(25,self.args.data['train']['action_chunk'])]
+                    # )
+
+                    # Save value metrics to a text file
+                    # with open(f'{self.save_folder}/value_metrics_val{i_validation}.txt', 'w') as f:
+                    #     for key, value in value_logs.items():
+                    #         f.write(f'{key}: {value}\n')
+
+                    # Clean up for next validation
+                    delattr(self, 'pd_values_arr_all')
+                    delattr(self, 'gt_values_arr_all')
 
 
     def infer(self, n_chunk_action=10, n_chunk_video=1, n_validation=10, global_step=0, domain_name="agibotworld"):

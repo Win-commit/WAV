@@ -37,6 +37,7 @@ from models.ltx_models.ltx_attention_processor import Attention
 
 
 from models.action_patches.patches import preprocessing_action_states, add_action_expert
+from models.value_patches.value_patches import preprocessing_value_states, add_value_expert
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -372,6 +373,7 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
         use_view_embed: bool = True,
         max_view: int = 3,
         action_expert: bool = False,
+        value_expert: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -429,8 +431,37 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
 
 
         self.action_expert = action_expert
+        self.value_expert = value_expert
+
         if self.action_expert:
+            has_value_cross_attention = self.value_expert
+
+            # 计算 value_inner_dim 用于 value->action 的 cross-attention
+            # 如果 value_expert 启用，使用其配置；否则使用默认值
+            if self.value_expert:
+                value_inner_dim = kwargs.get('value_num_attention_heads', 16) * kwargs.get('value_attention_head_dim', 32)
+            else:
+                value_inner_dim = 512  # 默认值
+
             add_action_expert(
+                self,
+                num_layers=num_layers,
+                inner_dim=inner_dim,
+                activation_fn=activation_fn,
+                norm_eps=norm_eps,
+                attention_bias=attention_bias,
+                norm_elementwise_affine=norm_elementwise_affine,
+                attention_out_bias=attention_out_bias,
+                qk_norm=qk_norm,
+                attention_class=Attention,
+                attention_processor=LTXVideoAttentionProcessor2_0(),
+                has_value_cross_attention=has_value_cross_attention,
+                value_inner_dim=value_inner_dim,
+                **kwargs
+            )
+
+        if self.value_expert:
+            add_value_expert(
                 self,
                 num_layers=num_layers,
                 inner_dim=inner_dim,
@@ -464,10 +495,16 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
         action_timestep: torch.LongTensor = None,
         return_video: bool = True,
         return_action: bool = False,
+        value_states: torch.Tensor = None,
+        value_timestep: torch.LongTensor = None,
+        return_value: bool = False,
         store_buffer=False,
         video_states_buffer=None,
+        value_store_buffer=False,
+        value_states_buffer=None,
         video_attention_mask: torch.Tensor = None,
         history_action_state: torch.Tensor = None,
+        history_value_state: torch.Tensor = None,
         num_frames: int = None,
         height: int = None,
         width: int = None,
@@ -524,6 +561,19 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                 action_timestep = torch.cat((torch.zeros_like(action_timestep[:,0:1]), action_timestep), dim=1)
             action_temb, action_embedded_timestep, action_rotary_emb, action_hidden_states = preprocessing_action_states(self, action_states, action_timestep)
 
+        if return_value:
+            ### when video_states_buffer is not None, value blocks will directly use the input buffers
+            ### when video_states_buffer is None, store_buffer should be true to save video buffers
+            if video_states_buffer is None:
+                assert store_buffer or return_video
+            if value_store_buffer:
+                value_states_buffer = []
+
+            if history_value_state is not None:
+                value_states = torch.cat((history_value_state, value_states), dim=1)
+                value_timestep = torch.cat((torch.zeros_like(value_timestep[:,0:1]), value_timestep), dim=1)
+            value_temb, value_embedded_timestep, value_rotary_emb, value_hidden_states = preprocessing_value_states(self, value_states, value_timestep)
+
         for block_idx, block in enumerate(self.transformer_blocks):
             
             if torch.is_grad_enabled() and self.gradient_checkpointing:
@@ -558,12 +608,37 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                 else:
                     hidden_states = video_states_buffer[block_idx]
                 
+                if return_value:
+                    ### final_hidden_states:  video features, b (v t h w) c
+                    ### value_hidden_states: random values, b t c
+                    ###
+                    if not value_store_buffer and value_states_buffer is not None:
+                        value_hidden_states = value_states_buffer[block_idx]
+                    else:
+                        final_hidden_states = rearrange(hidden_states, '(b v) l c -> b (v l) c', v=n_view)
+                        value_hidden_states = torch.utils.checkpoint.checkpoint(
+                            create_custom_forward(self.value_blocks[block_idx]),
+                            value_hidden_states,
+                            final_hidden_states,
+                            value_temb,
+                            value_rotary_emb,
+                            None,
+                            **ckpt_kwargs,
+                        )
+                        if value_store_buffer:
+                            value_states_buffer.append(value_hidden_states.clone())
 
                 if return_action:
                     ### final_hidden_states:  video features, b (v t h w) c
                     ### action_hidden_states: random actions, b v c
-                    ### 
+                    ###
                     final_hidden_states = rearrange(hidden_states, '(b v) l c -> b (v l) c', v=n_view)
+
+                    if return_value:
+                        value_features = value_hidden_states
+                    else:
+                        value_features = None
+
                     action_hidden_states = torch.utils.checkpoint.checkpoint(
                         create_custom_forward(self.action_blocks[block_idx]),
                         action_hidden_states,
@@ -571,8 +646,11 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                         action_temb,
                         action_rotary_emb,
                         None,
+                        value_features,
                         **ckpt_kwargs,
                     )
+
+                
             else:
                 if return_video or store_buffer:
                     hidden_states = block(
@@ -591,18 +669,44 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                 else:
                     hidden_states = video_states_buffer[block_idx]
                 
+                if return_value:
+                    ### final_hidden_states:  video features, b (v t h w) c
+                    ### value_hidden_states: random values, b v c
+                    ###
+                    if not value_store_buffer and value_states_buffer is not None:
+                        value_hidden_states = value_states_buffer[block_idx]
+                    else:
+                        final_hidden_states = rearrange(hidden_states, '(b v) l c -> b (v l) c', v=n_view)
+
+                        value_hidden_states = self.value_blocks[block_idx](
+                            hidden_states=value_hidden_states,
+                            encoder_hidden_states=final_hidden_states,
+                            temb=value_temb,
+                            rotary_emb=value_rotary_emb,
+                        )
+                        if value_store_buffer:
+                            value_states_buffer.append(value_hidden_states.clone())
+                    
                 if return_action:
                     ### final_hidden_states:  video features, b (v t h w) c
                     ### action_hidden_states: random actions, b v c
-                    ### 
+                    ###
                     final_hidden_states = rearrange(hidden_states, '(b v) l c -> b (v l) c', v=n_view)
-                    
+
+                    if return_value:
+                        value_features = value_hidden_states
+                    else:
+                        value_features = None
+
                     action_hidden_states = self.action_blocks[block_idx](
                         hidden_states=action_hidden_states,
                         encoder_hidden_states=final_hidden_states,
                         temb=action_temb,
                         rotary_emb=action_rotary_emb,
+                        value_hidden_states=value_features,
                     )
+
+                
 
                     
 
@@ -611,7 +715,9 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
 
         if store_buffer:
             final_output['video_states_buffer'] = video_states_buffer
-
+        if value_store_buffer:
+            final_output['value_states_buffer'] = value_states_buffer
+            
         if return_video:
             scale_shift_values = self.scale_shift_table[None, None] + embedded_timestep[:, :, None]
             shift, scale = scale_shift_values[:, :, 0], scale_shift_values[:, :, 1]
@@ -637,6 +743,22 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
             action_output = self.action_proj_out(action_hidden_states)
 
             final_output['action'] = action_output
+
+        if return_value:
+            if self.value_final_embeddings:
+                value_scale_shift_values = self.value_scale_shift_table[None, None] + value_embedded_timestep[:, :, None]
+                value_shift, value_scale = value_scale_shift_values[:,:,0], value_scale_shift_values[:,:,1]
+                value_hidden_states = self.value_norm_out(value_hidden_states)
+                value_hidden_states = value_hidden_states * (1 + value_scale) + value_shift
+            else:
+                value_hidden_states = self.value_norm_out(value_hidden_states)
+                value_hidden_states = self.value_proj_extra(value_hidden_states)
+            if history_value_state is not None:
+                value_hidden_states = value_hidden_states[:, 1:]
+
+            value_output = self.value_proj_out(value_hidden_states)
+
+            final_output['value'] = value_output
 
         if not return_dict:
             return (final_output,)

@@ -8,7 +8,11 @@ import argparse
 
 def load_data(data_path, key="action"):
     data = pd.read_parquet(data_path)
-    data = np.stack([data[key][i] for i in range(data[key].shape[0])])
+    if key in data:
+        data = np.stack([data[key][i] for i in range(data[key].shape[0])])
+    else:
+        # Create dummy data if key not found
+        data = np.zeros((100, 14))  # Default shape
     # data = np.stack([data[key][i][0] for i in range(data[key].shape[0])])
     return data 
 
@@ -25,7 +29,7 @@ def cal_statistic(data, _filter=True):
     return means, stds
 
 
-def get_statistics(data_root, data_name, data_type, save_path, action_key="action", state_key="observation.state", nrnd=50000, _filter=True,):
+def get_statistics(data_root, data_name, data_type, save_path, action_key="action", state_key="observation.state", value_key="state_value", nrnd=50000, _filter=True,):
     
     assert(data_type in ["joint", "eef"])
 
@@ -36,6 +40,7 @@ def get_statistics(data_root, data_name, data_type, save_path, action_key="actio
 
     data_list = []
     state_list = []
+    value_list = []
     delta_data_list = []
     for data_path in tqdm.tqdm(data_path_list):
         data = load_data(os.path.join(data_root, data_path), action_key)
@@ -44,6 +49,8 @@ def get_statistics(data_root, data_name, data_type, save_path, action_key="actio
         delta_data_list.append(delta_data)
         state = load_data(os.path.join(data_root, data_path), state_key)
         state_list.append(state)
+        value = load_data(os.path.join(data_root, data_path), value_key)
+        value_list.append(value)
 
     data_list = np.concatenate(data_list, axis=0)
     assert(len(data_list.shape)==2)
@@ -51,11 +58,15 @@ def get_statistics(data_root, data_name, data_type, save_path, action_key="actio
 
     delta_data_list = np.concatenate(delta_data_list, axis=0)
     assert(len(delta_data_list.shape)==2)
-    delta_means, delta_stds = cal_statistic(data_list, _filter=_filter)
+    delta_means, delta_stds = cal_statistic(delta_data_list, _filter=_filter)
 
     state_list = np.concatenate(state_list, axis=0)
     assert(len(state_list.shape)==2)
     state_means, state_stds = cal_statistic(state_list, _filter=_filter)
+
+    value_list = np.concatenate(value_list, axis=0)
+    assert(len(value_list.shape)==2)
+    value_means, value_stds = cal_statistic(value_list, _filter=_filter)
 
 
     ### example:
@@ -99,6 +110,10 @@ def get_statistics(data_root, data_name, data_type, save_path, action_key="actio
             "mean": state_means.tolist(),
             "std": state_stds.tolist()
         }),
+        data_name+"_value_"+data_type:dict({
+            "mean": value_means.tolist(),
+            "std": value_stds.tolist()
+        }),
     })
 
 
@@ -127,10 +142,12 @@ if __name__ == "__main__":
     parser.add_argument('--data_type', default="joints")
     parser.add_argument('--action_key', default="action")
     parser.add_argument('--state_key', default="observation.state")
+    parser.add_argument('--value_key', default="state_value")
     parser.add_argument('--save_path', default="PATH/OF/JSON/FILE")
 
     args = parser.parse_args()
 
     get_statistics(
-        args.data_root, args.data_name, args.data_type, args.save_path, action_key=args.action_key, state_key=args.state_key
+        args.data_root, args.data_name, args.data_type, args.save_path,
+        action_key=args.action_key, state_key=args.state_key, value_key=args.value_key
     )

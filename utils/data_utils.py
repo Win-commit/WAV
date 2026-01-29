@@ -272,7 +272,8 @@ def _pack_latents(latents: torch.Tensor, patch_size: int = 1, patch_size_t: int 
 def gen_noise_from_condition_frame_latent(
     condition_frame_latent, latent_num_frames,
     latent_height=12, latent_width=16,
-    generator=None, noise_to_condition_frames=0.05
+    generator=None, noise_to_condition_frames=0.05,
+    noise_mean=0.0, noise_std=1.0
 ):
 
     """
@@ -282,14 +283,25 @@ def gen_noise_from_condition_frame_latent(
     random value and noise these tokens to the corresponding
     level. The model quickly learns to utilize
     this new information (when provided) as a conditioning signal
-    
+
     condition_frame_latent: (b v) c m h w
+
+    Args:
+        condition_frame_latent: 条件帧的latent (b v) c m h w
+        latent_num_frames: latent帧数
+        latent_height: latent高度 (default: 12)
+        latent_width: latent宽度 (default: 16)
+        generator: 随机数生成器
+        noise_to_condition_frames: 噪声强度 (default: 0.05)
+        noise_mean: 高斯分布均值 (default: 0.0)
+        noise_std: 高斯分布标准差 (default: 1.0)
 
     """
 
     mem_size = condition_frame_latent.shape[2]
     num_channels_latents = condition_frame_latent.shape[1] # 128
     batch_size = condition_frame_latent.size(0)   # bv
+    # print("DEBUG: init_latents shape", condition_frame_latent.shape) ([3, 128, 4, 8, 10])
     # latent_num_frames = (num_frames - 1) // vae_temporal_compression_ratio + 1
 
     shape = (batch_size, num_channels_latents, latent_num_frames, latent_height, latent_width)
@@ -297,6 +309,7 @@ def gen_noise_from_condition_frame_latent(
 
     init_latents = condition_frame_latent[:,:,:1].repeat(1, 1, latent_num_frames, 1, 1)
     init_latents[:,:,:mem_size] = condition_frame_latent
+    
     conditioning_mask = torch.zeros(mask_shape, device=condition_frame_latent.device, dtype=condition_frame_latent.dtype)
     conditioning_mask[:, :, :mem_size] = 1.0
 
@@ -309,14 +322,17 @@ def gen_noise_from_condition_frame_latent(
     first_frame_mask = conditioning_mask.clone()
     first_frame_mask[:, :, :mem_size] = 1.0 - rand_noise_ff
 
+
     noise = randn_tensor(shape, generator=generator, device=condition_frame_latent.device, dtype=condition_frame_latent.dtype)
+    noise = noise * noise_std + noise_mean
+
     latents = init_latents * first_frame_mask + noise * (1 - first_frame_mask)
 
     conditioning_mask = _pack_latents(conditioning_mask).squeeze(-1)
     cond_indicator = _pack_latents(cond_indicator).squeeze(-1)
 
     latents = _pack_latents(latents)
-
+    # print("DEBUG: packed latents shape", latents.shape) ([3, 480, 128])
     # pack_latents: b c f h w -> b (f h w) c
     # unpack_latents: b (f h w) c -> b c f h w
 

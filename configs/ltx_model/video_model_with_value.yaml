@@ -1,11 +1,11 @@
 model_name: 'ltx_train'
 is_i2v: True
-report_to: wandb
-tracker_name: Phase3_3_PolicyModel_WOvalue_actionOnly
+report_to: None
+tracker_name: ltx_trainer
 
 logging_dir: logs
-output_dir: lrz_training/Phase3_3_PolicyModel_WOvalue_actionOnly
-pretrained_model_name_or_path: /liujinxin/zhy/lirunze/Genie-Envisioner/pretrained_models/LTX_video_part
+output_dir: PATH_TO_SAVE_LOGS_AND_CHECKPOINTS
+pretrained_model_name_or_path: PATH_TO_PRETRAINED_WEIGHTS_OF_VAE_AND_TOKENIZER
 
 ###
 train_data_class_path: data/lerobot_like_dataset.py
@@ -28,13 +28,11 @@ diffusion_scheduler_class: FlowMatchEulerDiscreteScheduler
 pipeline_class_path: models/pipeline/custom_pipeline.py
 pipeline_class: CustomPipeline
 
-#
-return_action: true
+# 
+return_action: false
 return_video: true
-return_value: false
-train_mode: 'action_only'  # 支持: video_only, action_only, value_only, value_action, all, action_full
+train_mode: 'video_only'
 action_loss_scale: 1.0
-value_loss_scale: 1.0
 
 # total training step is decided by the minimum of the below two
 train_steps: 1000000
@@ -97,7 +95,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: /liujinxin/zhy/lirunze/Genie-Envisioner/lrz_training/Phase2_1_ValueModel_dense_continuous/2025_12_13_09_39_16/step_18000/diffusion_pytorch_model.safetensors
+  model_path: PATH_TO_ANY_CHECKPOINT_SAFETENSOR
   config:
     activation_fn: gelu-approximate
     attention_bias: true
@@ -114,20 +112,17 @@ diffusion_model:
     patch_size: 1
     patch_size_t: 1
     qk_norm: rms_norm_across_heads
-    action_expert: true
+    action_expert: false
     action_in_channels: 14
     action_num_attention_heads: 16
     action_attention_head_dim: 32
     value_expert: false
-    value_in_channels: 17
-    value_num_attention_heads: 16
-    value_attention_head_dim: 32
 
 data:
 ### more details can be found in data/utils/*_dataset.py
   train:
-    data_roots: ["/liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets"]
-    domains: ["robotwin", ]
+    data_roots: ["path/to/aidea-world-lerobot"]
+    domains: ["agibotworld", ]
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -137,34 +132,24 @@ data:
     n_previous: 4
     previous_pick_mode: 'random'
     random_crop: False
-    dataset_info_cache_path: "/liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets/robotwin/.cache/train.json"
-    action_type: "delta"
-    action_space: "absolute"
-    action_key: "action"
-    value_key: "state_value"
-    state_key: "observation.state" 
-    value_dense: True
-    stat_file: /liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets/robotwin/meta/stats.json
-  val:
-    data_roots: ["/liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets"]
-    domains: ["robotwin", ]
-    sample_size: [192, 256]
-    sample_n_frames: 900
-    preprocess :  'resize'
-    valid_cam :  ['observation.images.top_head', 'observation.images.hand_left', 'observation.images.hand_right']
-    chunk: 9
-    action_chunk: 54
-    n_previous: 4
-    previous_pick_mode: 'random'
-    random_crop: False
-    dataset_info_cache_path: "/liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets/robotwin/.cache/val.json"
+    dataset_info_cache_path: "path/to/save/dataset_meta_info_cache/train"
     action_type: "delta"
     action_space: "joint"
-    action_key: "action"
-    value_key: "state_value"
-    state_key: "observation.state" 
-    value_dense: True
-    stat_file: /liujinxin/zhy/lirunze/Genie-Envisioner/lerobotlike_datasets/robotwin/meta/stats.json
+  val:
+    data_roots: ["path/to/aidea-world-lerobot"]
+    domains: ["agibotworld", ]
+    sample_size: [192, 256]
+    sample_n_frames: 900
+    preprocess :  'resize'
+    valid_cam :  ['observation.images.top_head', 'observation.images.hand_left', 'observation.images.hand_right']
+    chunk: 9
+    action_chunk: 54
+    n_previous: 4
+    previous_pick_mode: 'random'
+    random_crop: False
+    dataset_info_cache_path: "path/to/save/dataset_meta_info_cache/val"
+    action_type: "delta"
+    action_space: "joint"
 
 
 use_color_jitter: true

@@ -6,6 +6,9 @@ import numpy as np
 
 import imageio
 import math
+import sys
+sys.path.append('/zhaohan')
+sys.path.append('/zhaohan/LIBERO')
 
 from libero.libero import get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
@@ -17,20 +20,20 @@ DEVICE = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("
 np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 import robosuite.utils.transform_utils as T
 
-def save_rollout_video(rollout_dir, rollout_images, idx, success, task_description, log_file=None):
-    """Saves an MP4 replay of an episode."""
-    rollout_dir = f"{rollout_dir}/{DATE}"
-    os.makedirs(rollout_dir, exist_ok=True)
-    processed_task_description = task_description.lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
-    mp4_path = f"{rollout_dir}/{DATE_TIME}--episode={idx}--success={success}--task={processed_task_description}.mp4"
-    video_writer = imageio.get_writer(mp4_path, fps=20)
-    for img in rollout_images:
-        video_writer.append_data(img)
-    video_writer.close()
-    print(f"Saved rollout MP4 at path {mp4_path}")
-    if log_file is not None:
-        log_file.write(f"Saved rollout MP4 at path {mp4_path}\n")
-    return mp4_path
+# def save_rollout_video(rollout_dir, rollout_images, idx, success, task_description, log_file=None):
+#     """Saves an MP4 replay of an episode."""
+#     rollout_dir = f"{rollout_dir}/{DATE}"
+#     os.makedirs(rollout_dir, exist_ok=True)
+#     processed_task_description = task_description.lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
+#     mp4_path = f"{rollout_dir}/{DATE_TIME}--episode={idx}--success={success}--task={processed_task_description}.mp4"
+#     video_writer = imageio.get_writer(mp4_path, fps=20)
+#     for img in rollout_images:
+#         video_writer.append_data(img)
+#     video_writer.close()
+#     print(f"Saved rollout MP4 at path {mp4_path}")
+#     if log_file is not None:
+#         log_file.write(f"Saved rollout MP4 at path {mp4_path}\n")
+#     return mp4_path
 
 def get_libero_state(obs):
     state = np.concatenate((obs["robot0_eef_pos"], T.quat2axisangle(obs["robot0_eef_quat"]), obs["robot0_gripper_qpos"]) )
@@ -67,7 +70,7 @@ def save_rollout_video(rollout_dir, rollout_images, idx, success, task_descripti
     os.makedirs(rollout_dir, exist_ok=True)
     processed_task_description = task_description.lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
     mp4_path = f"{rollout_dir}/{DATE_TIME}--episode={idx}--success={success}--task={processed_task_description}.mp4"
-    video_writer = imageio.get_writer(mp4_path, fps=20)
+    video_writer = imageio.get_writer(mp4_path, fps=10)
     for img in rollout_images:
         video_writer.append_data(img)
     video_writer.close()

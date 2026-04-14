@@ -7,8 +7,6 @@ import argparse
 import json
 import importlib
 # ----------------------------------------------------
-
-
 from yaml import load, dump, Loader, Dumper
 import numpy as np
 from tqdm import tqdm
@@ -19,6 +17,7 @@ from copy import deepcopy
 import transformers
 import logging
 from PIL import Image
+import time 
 # ----------------------------------------------------
 import diffusers
 from diffusers.optimization import get_scheduler
@@ -29,8 +28,9 @@ from diffusers.training_utils import (
 )
 
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+sys.path.append('/zhaohan')
+sys.path.append('/zhaohan/LIBERO')
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from utils.libero_sim_utils import get_libero_env, get_libero_image, get_libero_dummy_action, get_libero_state, save_rollout_video
 from libero.libero import benchmark
@@ -48,7 +48,7 @@ from utils.data_utils import get_latents, get_text_conditions, gen_noise_from_co
 
 class InferenceLibero:
     
-    def __init__(self, config_file, output_dir=None, weight_dtype=torch.bfloat16, device="cuda:0", task_suite_name='libero_goal', model_path=None, exec_step=8, threshold=20, num_inference_steps=10) -> None:
+    def __init__(self, config_file, output_dir=None, weight_dtype=torch.bfloat16, device="cuda:0", task_suite_name='libero_goal', model_path=None, exec_step=8, threshold=20, num_inference_steps=10,sub_folder=None) -> None:
         
         cd = load(open(config_file, "r"), Loader=Loader)
         args = argparse.Namespace(**cd)
@@ -82,8 +82,8 @@ class InferenceLibero:
         current_time = datetime.now()
         start_time = current_time.strftime("%Y_%m_%d_%H_%M_%S")
         self.save_folder = os.path.join(self.args.output_dir, start_time)
-        if getattr(self.args, "sub_folder", False):
-            self.save_folder = os.path.join(self.args.output_dir, self.args.sub_folder)
+        if sub_folder is not None:
+            self.save_folder = os.path.join(self.args.output_dir, sub_folder)
         os.makedirs(self.save_folder, exist_ok=True)
         
         # import pdb; pdb.set_trace()
@@ -143,6 +143,110 @@ class InferenceLibero:
             json.dump(args_dict, file, indent=4, sort_keys=False)
         self.log_file.write(f"config: {args_dict}\n")
         self.log_file.flush()
+
+        self.inference_call_idx = 0
+        self.memory_summary = {
+            "max_seen_allocated_gb": 0.0,
+            "max_seen_reserved_gb": 0.0,
+            "max_seen_tag": None,
+            "max_inference_peak_allocated_gb": 0.0,
+            "max_inference_peak_reserved_gb": 0.0,
+            "max_inference_peak_tag": None,
+        }
+        self._log_memory("init")
+
+    @staticmethod
+    def _bytes_to_gb(value):
+        if value is None:
+            return None
+        return round(value / 1024**3, 3)
+
+    def _get_memory_device(self):
+        try:
+            return torch.device(self.device)
+        except (TypeError, RuntimeError):
+            if torch.cuda.is_available():
+                return torch.device(f"cuda:{torch.cuda.current_device()}")
+            return torch.device("cpu")
+
+    def _synchronize_for_memory(self):
+        device = self._get_memory_device()
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize(device)
+
+    def _reset_peak_memory_stats(self):
+        device = self._get_memory_device()
+        if device.type == "cuda" and torch.cuda.is_available():
+            device_index = device.index if device.index is not None else torch.cuda.current_device()
+            torch.cuda.reset_peak_memory_stats(device_index)
+
+    def _get_memory_stats(self):
+        device = self._get_memory_device()
+        if device.type == "cuda" and torch.cuda.is_available():
+            device_index = device.index if device.index is not None else torch.cuda.current_device()
+            free_memory, total_memory = torch.cuda.mem_get_info(device_index)
+            return {
+                "device": f"cuda:{device_index}",
+                "memory_allocated": self._bytes_to_gb(torch.cuda.memory_allocated(device_index)),
+                "memory_reserved": self._bytes_to_gb(torch.cuda.memory_reserved(device_index)),
+                "max_memory_allocated": self._bytes_to_gb(torch.cuda.max_memory_allocated(device_index)),
+                "max_memory_reserved": self._bytes_to_gb(torch.cuda.max_memory_reserved(device_index)),
+                "free_memory": self._bytes_to_gb(free_memory),
+                "total_memory": self._bytes_to_gb(total_memory),
+            }
+
+        stats = get_memory_statistics()
+        stats["device"] = str(device)
+        return stats
+
+    def _update_memory_summary(self, tag, stats, inference_peak=False):
+        alloc = stats.get("memory_allocated")
+        reserved = stats.get("memory_reserved")
+
+        if alloc is not None and alloc >= self.memory_summary["max_seen_allocated_gb"]:
+            self.memory_summary["max_seen_allocated_gb"] = alloc
+            self.memory_summary["max_seen_tag"] = tag
+        if reserved is not None and reserved >= self.memory_summary["max_seen_reserved_gb"]:
+            self.memory_summary["max_seen_reserved_gb"] = reserved
+            self.memory_summary["max_seen_tag"] = tag
+
+        if inference_peak:
+            peak_alloc = stats.get("max_memory_allocated")
+            peak_reserved = stats.get("max_memory_reserved")
+            if peak_alloc is not None and peak_alloc >= self.memory_summary["max_inference_peak_allocated_gb"]:
+                self.memory_summary["max_inference_peak_allocated_gb"] = peak_alloc
+                self.memory_summary["max_inference_peak_tag"] = tag
+            if peak_reserved is not None and peak_reserved >= self.memory_summary["max_inference_peak_reserved_gb"]:
+                self.memory_summary["max_inference_peak_reserved_gb"] = peak_reserved
+                self.memory_summary["max_inference_peak_tag"] = tag
+
+    def _log_memory(self, tag, inference_peak=False):
+        self._synchronize_for_memory()
+        stats = self._get_memory_stats()
+        self._update_memory_summary(tag, stats, inference_peak=inference_peak)
+        self.log_file.write(f"[MEMORY][{tag}] {json.dumps(stats, ensure_ascii=False)}\n")
+        self.log_file.flush()
+        return stats
+
+    def _log_memory_delta(self, tag, start_stats, end_stats):
+        delta = {}
+        for key in [
+            "memory_allocated",
+            "memory_reserved",
+            "max_memory_allocated",
+            "max_memory_reserved",
+            "free_memory",
+        ]:
+            start_value = start_stats.get(key)
+            end_value = end_stats.get(key)
+            if start_value is not None and end_value is not None:
+                delta[key] = round(end_value - start_value, 3)
+        self.log_file.write(f"[MEMORY][{tag}][delta] {json.dumps(delta, ensure_ascii=False)}\n")
+        self.log_file.flush()
+
+    def _log_memory_summary(self, tag):
+        self.log_file.write(f"[MEMORY][{tag}][summary] {json.dumps(self.memory_summary, ensure_ascii=False)}\n")
+        self.log_file.flush()
         
     def prepare_models(self,):
 
@@ -167,6 +271,7 @@ class InferenceLibero:
         self.text_uncond = get_text_conditions(self.tokenizer, self.text_encoder, prompt="")
         self.uncond_prompt_embeds = self.text_uncond['prompt_embeds']
         self.uncond_prompt_attention_mask = self.text_uncond['prompt_attention_mask']
+        self._log_memory("after_text_encoder_load")
 
         ### Load VAE
         vae_class = import_custom_class(
@@ -189,6 +294,7 @@ class InferenceLibero:
         self.TEMPORAL_DOWN_RATIO = self.vae.temporal_compression_ratio
         print(f'SPATIAL_DOWN_RATIO of VAE :{self.SPATIAL_DOWN_RATIO}')
         print(f'TEMPORAL_DOWN_RATIO of VAE :{self.TEMPORAL_DOWN_RATIO}')
+        self._log_memory("after_vae_load")
 
 
         ### Load Diffusion Model
@@ -203,6 +309,7 @@ class InferenceLibero:
         ).to(device, dtype=dtype)
         total_params = count_model_parameters(self.diffusion_model)
         print(f'Total parameters for transformer model:{total_params}')
+        self._log_memory("after_diffusion_model_load")
 
 
         ### Load Diffuser Scheduler
@@ -222,6 +329,7 @@ class InferenceLibero:
         self.pipeline = self.pipeline_class(
             self.scheduler, self.vae, self.text_encoder, self.tokenizer, self.diffusion_model
         )
+        self._log_memory("after_pipeline_init")
         
     def prepare_simulator(self, ):
         benchmark_dict = benchmark.get_benchmark_dict()
@@ -229,7 +337,7 @@ class InferenceLibero:
         return task_suite
     
     @torch.no_grad()
-    def play(self, obs, prompt, excution_step=1, state=None):
+    def play(self, obs, prompt, excution_step=1, state=None,explore_config=None):
         """
         obs: tensor of shape v*3*h*w ranging -1 to 1, v c h w
         cond_prompt: task description
@@ -288,8 +396,13 @@ class InferenceLibero:
         obs_tensor = rearrange(obs_tensor, "b c v t h w -> (b v) c t h w")
 
         negative_prompt = ""
+        self.inference_call_idx += 1
+        memory_tag = f"policy_infer_{self.inference_call_idx:05d}"
+        self._reset_peak_memory_stats()
+        memory_before = self._log_memory(f"{memory_tag}_before")
         pred_all = self.pipeline.infer(
             image=obs_tensor,
+            n_prev=self.n_prev,
             prompt=prompt,
             negative_prompt=negative_prompt,
             num_inference_steps=self.num_inference_steps,
@@ -301,15 +414,22 @@ class InferenceLibero:
             n_view=v,
             return_action=True,
             return_video=False,
+            return_value=self.args.return_value,
+            exploration=self.args.exploration,
             chunk=(self.chunk-1)//self.TEMPORAL_DOWN_RATIO+1,
             action_chunk=self.action_chunk,
             history_action_state=history_action_state if self.add_state else None,
+            value_chunk=(self.action_chunk if self.args.data['train'].get("value_dense", False) else self.args.data['train']['chunk']),
             noise_seed=42,
             pixel_wise_timestep = self.args.pixel_wise_timestep,
             n_chunk=1,
-            n_prev=self.n_prev,
+            return_dict=False,
             action_dim=self.action_dim,
+            value_dim=self.args.diffusion_model["config"]["value_in_channels"],
+            explore_config=explore_config,
         )[0]
+        memory_after = self._log_memory(f"{memory_tag}_after", inference_peak=True)
+        self._log_memory_delta(memory_tag, memory_before, memory_after)
 
         actions_pred = pred_all["action"].detach().cpu()[0]
         # actions_pred = actions_pred * self.act_std + self.act_mean
@@ -329,9 +449,23 @@ class InferenceLibero:
         self.action_buffer = torch.zeros(self.action_chunk, self.action_dim, dtype=torch.bfloat16)
         self.cur_step = 0
     
-    def infer(self, num_trails_per_task, image_shape=(256,256)):
+    def infer(self, num_trails_per_task, image_shape=(256,256),explore_config = None, task_ids = None):
         total_episodes, total_successes = 0, 0
-        for task_id in range( self.task_suite.n_tasks):
+        if task_ids is not None:
+            if isinstance(task_ids, list):
+                n_tasks = len(task_ids)  # 使用列表长度
+                task_ids_list = task_ids  # 保存原始列表用于迭代
+            else:
+                n_tasks = 1
+                task_ids_list = [task_ids]
+        else:
+            n_tasks = self.task_suite.n_tasks
+            task_ids_list = None
+        for i in range(n_tasks):
+            if task_ids_list is not None:
+                task_id = task_ids_list[i]
+            else:
+                task_id = i
             task = self.task_suite.get_task(task_id)
             initial_states = self.task_suite.get_task_init_states(task_id)
             
@@ -381,14 +515,18 @@ class InferenceLibero:
                     
                     agtview_img, wrist_img = get_libero_image(obs)
                     replay_images.append(agtview_img)
-                    
+
+
                     agtview_img_tensor = torch.tensor(agtview_img.copy()).to(self.device).permute(2, 0, 1).unsqueeze(0) 
                     wrist_img_tensor = torch.tensor(wrist_img.copy()).to(self.device).permute(2, 0, 1).unsqueeze(0) 
                     
                     img_obs = torch.cat([agtview_img_tensor, wrist_img_tensor], dim=0)
                     # get obs: 2 * 3 * h * w
                     # print(f"obs shape: {obs.shape}")
-                                        
+                    
+                    #log time cost
+                    start_time = time.time()          
+                    
                     if self.with_state:
                         state = get_libero_state(obs)
 
@@ -396,10 +534,15 @@ class InferenceLibero:
                         state = state * 2 -1
                         state = torch.cat((torch.zeros([1,self.basic_action_dim]), state), dim=1)
 
-                        actions = self.play(img_obs, task_description, excution_step=self.excution_step, state=state) # action_chunk * action_dim
+                        actions = self.play(img_obs, task_description, excution_step=self.excution_step, state=state,explore_config=explore_config) # action_chunk * action_dim
                     else:
-                        actions = self.play(img_obs, task_description, excution_step=self.excution_step, state=None) # action_chunk * action_dim
+                        actions = self.play(img_obs, task_description, excution_step=self.excution_step, state=None, explore_config=explore_config) # action_chunk * action_dim
                     actions = actions.cpu().numpy()
+                    
+                    end_time = time.time()
+                    time_cost = end_time-start_time
+                    print(f"Time Cost:{time_cost}")
+                    self.log_file.write(f"Inference Time Cost:{time_cost}\n")
 
 
                     if t  >= max_steps:
@@ -420,9 +563,9 @@ class InferenceLibero:
                         
                         if not done and env.env.done:
                             print(f">>>>>Task {task_id} Episode {episode_idx} is not done but env signals done.")
-                            save_rollout_video(
-                                rollout_dir=self.save_folder, rollout_images=replay_images, idx=total_episodes, success=done, task_description="error_{e}"+task_description
-                            )
+                            # save_rollout_video(
+                            #     rollout_dir=self.save_folder, rollout_images=replay_images, idx=total_episodes, success=done, task_description="error_{e}"+task_description
+                            # )
                     
                         if done: # or env.env.done:
                             task_successes += 1
@@ -444,14 +587,20 @@ class InferenceLibero:
                 self.log_file.write(f"# episodes completed so far: {total_episodes}\n")
                 print(f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)")
                 self.log_file.write(f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)\n")
+                self._log_memory(f"task{task_id}_episode{episode_idx}_end")
                 self.log_file.flush()
-                
+            
+            
             # Log final results
             print(f"Current task success rate: {float(task_successes) / float(task_episodes)}")
             print(f"Current total success rate: {float(total_successes) / float(total_episodes)}")
             self.log_file.write(f"Current task success rate: {float(task_successes) / float(task_episodes)}\n")
             self.log_file.write(f"Current total success rate: {float(total_successes) / float(total_episodes)}\n")
+            self._log_memory(f"task{task_id}_end")
             self.log_file.flush()
+
+        self._log_memory("evaluation_end")
+        self._log_memory_summary("evaluation_end")
 
 
 
@@ -461,23 +610,34 @@ if __name__ == "__main__":
     parser.add_argument("--config_file", type=str, help="path to config file")
     parser.add_argument("--ckpt_path", type=str, help="path to the checkpoint file")
     parser.add_argument("--output_dir", type=str, default=None, help="path to output directory")
+    parser.add_argument("--sub_folder", type=str, default=None)
     parser.add_argument("--task_suite_name", type=str, default="libero_goal", help="task suite name")
     parser.add_argument("--exec_step", type=int, default=8, help="excution step")
     parser.add_argument("--num_trails_per_task", type=int, default=50, help="number of inference steps")
     parser.add_argument("--device", type=int, default=0, help="cuda id")
     parser.add_argument("--threshold", type=int, default=20, help="threshold")
-
+    parser.add_argument("--explore_steps",type=int, default=5)
+    parser.add_argument("--task_ids",type=int, default=None)
     args = parser.parse_args()
-
     config_file = args.config_file
     output_dir = os.path.join(args.output_dir, args.task_suite_name)
+    explore_config = {
+                "explore_steps": args.explore_steps,
+                "dynamic_groups": 30,
+                "value_groups": 5,
+                "sigma_decay": 0.5,
+                "alpha_smooth": 0.9,
+                "value_elites": 0.1,
+                "dynamic_elites": 0.9,
+            }
 
 
     libero_infer = InferenceLibero(
         config_file=config_file, output_dir=output_dir, task_suite_name=args.task_suite_name, model_path=args.ckpt_path, exec_step=args.exec_step, device=f"cuda:{args.device}",
-        threshold=args.threshold
+        threshold=args.threshold,sub_folder=args.sub_folder
     )
     libero_infer.prepare_models()
+    
     libero_infer.infer(
-        num_trails_per_task=args.num_trails_per_task, image_shape=libero_infer.args.data["train"]["sample_size"]
+        num_trails_per_task=args.num_trails_per_task, image_shape=libero_infer.args.data["train"]["sample_size"],explore_config=explore_config, task_ids=args.task_ids
     )

@@ -10,7 +10,7 @@ def main():
         description="Arguments for the main train program."
     )
     parser.add_argument('--config_file', type=str, required=True, help='Path for the config file')
-    parser.add_argument('--runner_class_path', type=str, default="runner/ge_trainer.py")
+    parser.add_argument('--runner_class_path', type=str, default="runner/trainer.py")
     parser.add_argument('--runner_class', type=str, default="Trainer")
     parser.add_argument('--mode', type=str, default="train")
     parser.add_argument('--checkpoint_path', type=str, default=None, help='Path to trained checkpoint, used in inference stage only')

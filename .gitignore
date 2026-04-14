@@ -177,8 +177,21 @@ lrz_training_v2/
 .claude/
 value_vis/
 wandb/
-pretrained_models/
-hparam_search/
-lerobotlike_datasets/
+pretrained_models/GE_base
+pretrained_models/LTX_video_part
+hparam_search_grid/
+lerobotlike_datasets/*
 evaluation_results/
 evaluation_results/*
+*.json
+video_gen_examples/
+# configs
+configs/ltx_model/robotwin_clean_full
+configs/ltx_model/robotwin
+configs/ltx_model/calvin
+
+# experiments
+experiments/calvin_eval_sequences.json
+experiments/eval_calvin.py
+experiments/eval_calvin.sh
+experiments/RUN.md

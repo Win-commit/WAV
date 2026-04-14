@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+import math
 import os
 import sys
 from importlib import import_module
@@ -711,7 +712,7 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
             sigma_decay = explore_config.get("sigma_decay",0.95)
             alpha_smooth = explore_config.get("alpha_smooth",0.8)
             snr_flatten = snr.flatten()
-            _, value_elites_idx = torch.topk(snr_flatten, k=explore_config.get("value_elites",32), largest=True)
+            _, value_elites_idx = torch.topk(snr_flatten, k=math.ceil(values_candidates.shape[0] * explore_config.get("value_elites",0.5)), largest=True)
             value_elites = values_candidates[value_elites_idx]
             value_elites_mu = value_elites.mean(dim=0)
             value_elites_std = value_elites.std(dim=0) * sigma_decay 
@@ -719,8 +720,10 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
             value_noise_std = alpha_smooth * value_noise_std + (1 - alpha_smooth) * value_elites_std
             #video dist params update
             snr = snr.max(dim=-1)[0] #[dynamic_groups]
-            _, video_elites_idx = torch.topk(snr, k=explore_config.get("dynamic_elites",8), largest=True)
+            _, video_elites_idx = torch.topk(snr, k=math.ceil(snr.shape[0] * explore_config.get("dynamic_elites",0.5)), largest=True)
+            latents = rearrange(latents, "(b v) s d -> b v s d", b = explore_config.get("dynamic_groups",25))
             video_elites = latents[video_elites_idx]
+            video_elites = rearrange(video_elites, "b v s d -> (b v) s d")
             video_elites = self._unpack_latents(
                             video_elites,
                             latent_num_frames,
@@ -1051,13 +1054,13 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
 
         if explore_config is None:
             explore_config = {
-                "explore_steps": 5,
-                "dynamic_groups": 50,
+                "explore_steps": 1,
+                "dynamic_groups": 30,
                 "value_groups": 5,
-                "sigma_decay": 0.95,
-                "alpha_smooth": 0.5,
-                "value_elites": 32,
-                "dynamic_elites": 8,
+                "sigma_decay": 0.5,
+                "alpha_smooth": 0.9,
+                "value_elites": 0.1,
+                "dynamic_elites": 0.9,
             }
 
         for i_chunk in range(n_chunk):
@@ -1076,7 +1079,7 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
                     scheduler_config = scheduler_config,
                     infer_params = infer_params,
                     )
-                print("DEBUG",video_noise_mean.mean(),video_noise_std.mean(),value_noise_mean.mean(),value_noise_std.mean())
+                # print("DEBUG",video_noise_mean.mean(),video_noise_std.mean(),value_noise_mean.mean(),value_noise_std.mean())
                 latents, conditioning_mask, cond_indicator = gen_noise_from_condition_frame_latent(
                     init_latents, latent_num_frames, latent_height, latent_width, video_generator, noise_to_condition_frames=0,noise_mean=video_noise_mean, noise_std=video_noise_std
                 )
@@ -1100,11 +1103,11 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
                     latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents.clone()
                     latent_model_input = latent_model_input.to(prompt_embeds.dtype)
 
-                    # TODO: only compute video in the first most noisy timestep
+                    # only compute video in the first most noisy timestep
                     compute_video = i == 0 or return_video
                     store_buffer = i == 0 and not return_video
                     
-                    # TODO: only compute value in the first most noisy timestep
+                    # only compute value in the first most noisy timestep
                     value_store_buffer = i == 0 and return_value
 
 

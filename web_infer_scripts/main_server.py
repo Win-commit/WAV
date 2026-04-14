@@ -36,6 +36,7 @@ def get_args():
     parser.add_argument('--denoise_step', type=int, default=5)
 
     parser.add_argument('--action_dim', type=int, default=16)
+    parser.add_argument('--norm_type', type=str, default="meanstd")
     parser.add_argument('--device', type=int, default=0)
 
     args = parser.parse_args()
@@ -50,11 +51,11 @@ def get_args():
 if __name__ == "__main__":
 
     """
-    This script provides a simple way to build a web server of GEAct based on the serving codes in openpi_client (modified from https://github.com/Physical-Intelligence/openpi)
+    This script provides a simple way to build a web server of VLA-Planning based on the serving codes in openpi_client (modified from https://github.com/Physical-Intelligence/openpi)
     """
 
     args = get_args()
-    policy_metadata = dict(test_meta="Genie Envisioner Action Model")
+    policy_metadata = dict(test_meta="VLA-Planning Action Model")
 
     ### init actor
     actor = MVActorServer(
@@ -66,7 +67,8 @@ if __name__ == "__main__":
         domain_name=args.domain_name,
         num_inference_steps=args.denoise_step,
         action_dim=args.action_dim,
-        gripper_dim=1, device=args.device
+        gripper_dim=1, device=args.device,
+        norm_type=args.norm_type
     )
 
     ### init server

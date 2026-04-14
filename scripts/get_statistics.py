@@ -146,7 +146,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_root', default="PATH/TO/YOUR/DATASET")
     parser.add_argument('--data_name', default="YOUR_CUSTOM_DATASET")
-    parser.add_argument('--data_type', default="joints")
+    parser.add_argument('--data_type', default="joint")
     parser.add_argument('--action_key', default="action")
     parser.add_argument('--state_key', default="observation.state")
     parser.add_argument('--value_key', default="state_value")

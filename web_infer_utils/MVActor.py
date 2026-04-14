@@ -17,12 +17,10 @@ sys.path.insert(0, root_dir)
 
 sys.path.insert(0, current_dir)
 
-import os
 import pdb
 import random
 from datetime import datetime
 import json
-import cv2
 import numpy as np
 import torch
 import torchvision
@@ -148,9 +146,8 @@ class MVActor:
 
         self.reset()
 
-        # 添加显存监控计数器
         self.inference_count = 0
-        self.memory_cleanup_interval = 15  # 每10次推理清理一次显存
+        self.memory_cleanup_interval = 15  # Clear the video memory every 15 inferences
         self.last_memory_cleanup_count = 0
 
 
@@ -238,7 +235,7 @@ class MVActor:
         )
 
     @torch.no_grad()
-    def play(self, obs, prompt, idx=0, num_inference_steps=None, execution_step=1, state=None, state_zeropadding=[0,0], ndim_action=None, explore_config=None):
+    def play(self, obs, prompt, num_inference_steps=None, execution_step=1, state=None, state_zeropadding=[0,0], ndim_action=None, explore_config=None):
 
         """
         obs: One of the followings
@@ -246,11 +243,11 @@ class MVActor:
             2. np.array of shape: {v, h, w, 3}, ranging from 0 to 255 (np.uin8)
         prompt: task description
         execution_step: excution step of the past play
-        explore_config: dict, 超参数配置字典
+        explore_config: dict, VLA-Planning Hyperparameter Configuration
         return the raw action
         """
         print(">>>>>>>>execution_step: ", execution_step)
-        assert execution_step >= 0 and execution_step <= 100, "execution_step should be in [1, 100]"
+        assert execution_step >= 0 and execution_step <= 100, "execution_step should be in [0, 100]"
 
 
         if obs.dtype == np.uint8:
@@ -269,6 +266,7 @@ class MVActor:
 
 
         if self.add_state:
+            state =  np.concatenate([np.zeros(state_zeropadding[0]), state, np.zeros(state_zeropadding[1])])
             
             if self.norm_type == "meanstd":
                 ### C -> 1,C
@@ -290,8 +288,8 @@ class MVActor:
             history_action_state = torch.from_numpy(normed_state).to(self.device, dtype=self.dtype)
             ### 1,1,C
             history_action_state = history_action_state.unsqueeze(dim=0)
-            assert(len(history_action_state.shape) == 3 and history_action_state.shape[-1]==self.action_dim)
-
+            assert len(history_action_state.shape) == 3 
+            # assert history_action_state.shape[-1]==self.action_dim)
         else:
             history_action_state = None
 
@@ -314,9 +312,20 @@ class MVActor:
             self.buffer = [self.obs[-1]]
 
         obs_tensor = torch.stack(self.obs, dim=1)  # from v, c, h, w to v, t, c, h, w
-        obs_tensor = rearrange(obs_tensor, "v t c h w -> c v t h w")  # c,t,h,w
+        obs_tensor = rearrange(obs_tensor, "v t c h w -> c v t h w")  # c,v,t,h,w
         obs_tensor = obs_tensor.unsqueeze(0)  # b,c,v,t,h,w
+
+        b,c,v,t,h,w = obs_tensor.shape
         obs_tensor = rearrange(obs_tensor, "b c v t h w -> (b v) c t h w")
+
+        # from torchvision.utils import save_image
+        # debug_dir = 'Path/To/Save'
+        # os.makedirs(debug_dir, exist_ok=True)
+        # for view_idx in range(v):
+        #     for time_idx in range(t):
+        #         img = obs_tensor[view_idx, :, time_idx]  # (c, h, w)
+        #         save_image(img, f"{debug_dir}/MV_view{view_idx}_t{time_idx}.jpg")
+
 
         negative_prompt = ''
 
@@ -419,7 +428,7 @@ class MVActor:
          ### save action buffer
         self.action_buffer = final_actions_pred.clone()
 
-        # 增加推理计数并定期清理显存
+        # periodically clear the gpu memory
         self.inference_count += 1
         if self.inference_count - self.last_memory_cleanup_count >= self.memory_cleanup_interval:
             self._cleanup_memory()
@@ -435,7 +444,6 @@ class MVActor:
         self.cur_step = 0
 
     def _cleanup_memory(self):
-        """清理 CUDA 显存"""
         if torch.cuda.is_available():
             torch.cuda.synchronize()
             torch.cuda.empty_cache()

@@ -15,13 +15,13 @@ torchrun --nnodes=1 \
     --master_port=12345 \
     --node_rank=0 \
     $script_path \
-    --runner_class_path runner/ge_inferencer.py \
+    --runner_class_path runner/inferencer.py \
     --runner_class Inferencer \
     --config_file $config_path \
     --mode infer \
     --checkpoint_path $ckp_path \
     --output_path $output_path \
     --n_validation 1 \
-    --n_chunk_action 7 \
+    --n_chunk_action 1 \
     --domain_name $domain_name
 

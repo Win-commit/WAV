@@ -6,6 +6,11 @@ import gym
 import numpy as np
 import torch
 
+# import sys
+# sys.path.append('/zhaohan')
+# sys.path.append('/zhaohan/calvin')
+
+
 from calvin_env.envs.play_table_env import get_env
 from calvin_env.utils.utils import EglDeviceNotFoundError, get_egl_device_id
 

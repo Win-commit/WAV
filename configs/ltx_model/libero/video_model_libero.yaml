@@ -1,11 +1,11 @@
 model_name: 'ltx_train'
 is_i2v: True
-report_to: None
-tracker_name: ltx_trainer
+report_to: wandb
+tracker_name: Phase1_VideoAdapter_libero
 
 logging_dir: logs
-output_dir: PATH_TO_SAVE_LOGS_AND_CHECKPOINTS
-pretrained_model_name_or_path: PATH_TO_PRETRAINED_WEIGHTS_OF_VAE_AND_TOKENIZER
+output_dir: lrz_training_v2/libero/Phase1_VideoAdapter
+pretrained_model_name_or_path: pretrained_models/LTX_video_part
 
 ###
 train_data_class_path: data/libero_dataset.py
@@ -31,8 +31,11 @@ pipeline_class: CustomPipeline
 # 
 return_action: false
 return_video: true
+return_value: false
+exploration: false
 train_mode: 'video_only'
 action_loss_scale: 1.0
+value_loss_scale: 1.0
 
 # total training step is decided by the minimum of the below two
 train_steps: 1000000
@@ -95,7 +98,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: PATH_TO_ANY_CHECKPOINT_SAFETENSOR
+  model_path: pretrained_models/GE_base/GE_base_fast_v0.1.safetensors
   config:
     activation_fn: gelu-approximate
     attention_bias: true
@@ -113,10 +116,17 @@ diffusion_model:
     patch_size_t: 1
     qk_norm: rms_norm_across_heads
     action_expert: false
+    action_in_channels: 15
+    action_num_attention_heads: 16
+    action_attention_head_dim: 32
+    value_expert: false
+    value_in_channels: 10
+    value_num_attention_heads: 16
+    value_attention_head_dim: 32
 
 data:
   train:
-    data_roots: ["path/to/libero-dataset"]
+    data_roots: ["lerobotlike_datasets"]
     domains: ["libero"]
     sample_size: [256, 256]
     sample_n_frames: 500
@@ -130,12 +140,14 @@ data:
     ignore_seek: False
     action_type: "absolute"
     action_space: "eef"
-    stat_file: configs/ltx_model/libero/libero_all.json
+    stat_file: lerobotlike_datasets/libero/meta/stats.jsonl
     state_key: state
     action_key: actions
+    value_key: "state_value"
+    value_dense: True
     extra_parquet_index: False
   val:
-    data_roots: ["path/to/libero-dataset"]
+    data_roots: ["lerobotlike_datasets"]
     domains: ["libero"]
     sample_size: [256, 256]
     sample_n_frames: 500
@@ -149,14 +161,16 @@ data:
     ignore_seek: False
     action_type: "absolute"
     action_space: "eef"
-    stat_file: configs/ltx_model/libero/libero_all.json
+    stat_file: lerobotlike_datasets/libero/meta/stats.jsonl
     state_key: state
     action_key: actions
+    value_key: "state_value"
+    value_dense: True
     extra_parquet_index: False
 
 use_color_jitter: true
 num_inference_step: 10
-noisy_video: false
+noisy_video: true
 
 # false for quick debug, for training set True
 load_weights: true

@@ -1,12 +1,11 @@
 model_name: 'ltx_train'
 is_i2v: True
 report_to: wandb
-tracker_name: Phase3_PolicyModel_WOV_absolute_eef_libero
+tracker_name: Phase3_PolicyModel_antiOverfit_WOV_absolute_joint_WState_fold_towel_v2
 
 logging_dir: logs
-output_dir: lrz_training_v2/libero/Phase3_PolicyModel_WOV_absolute_eef
+output_dir: lrz_training_v2/fold_towel/antiOverfit/Phase3_PolicyModel_WOV_absolute_joint_WState_v2
 pretrained_model_name_or_path: pretrained_models/LTX_video_part
-
 
 ###
 train_data_class_path: data/libero_dataset.py
@@ -34,16 +33,16 @@ return_action: true
 return_video: false
 return_value: false
 exploration: false
-train_mode: 'action_full'  # 支持: video_only, action_only, value_only, value_action, all, action_full
+train_mode: 'action_full'
 action_loss_scale: 1.0
 value_loss_scale: 1.0
 
 # total training step is decided by the minimum of the below two
 train_steps: 1000000
 train_epochs: 10000
-steps_to_save: 10000
+steps_to_save: 1000
 steps_to_log: 20
-steps_to_val: 1000000000
+steps_to_val: 200000
 
 mixed_precision: bf16
 allow_tf32: False
@@ -57,7 +56,6 @@ enable_slicing: True
 enable_tiling: True
 
 add_state: True
-rand_init_action: True
 
 caption_dropout_p: 0.0
 
@@ -67,16 +65,16 @@ dataloader_num_workers: 8
 pin_memory: True
 
 gradient_checkpointing: True
-noise_to_first_frame: 0.01
+noise_to_first_frame: 0.1
 
 # Optimizer Config
 optimizer: adamw
-lr: 5e-5
+lr: 3e-5
 beta1: 0.9
 beta2: 0.95
 beta3: 0.999
 epsilon: 1e-8
-weight_decay: 1e-5
+weight_decay: 1e-3
 optimizer_8bit: False
 optimizer_torchao: False
 scale_lr: False
@@ -100,7 +98,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: lrz_training_v2/libero/Phase1_VideoAdapter/2026_02_07_17_38_14/step_30000/diffusion_pytorch_model.safetensors
+  model_path: lrz_training_v2/fold_towel/Phase1_VideoAdapter/2026_03_01_16_46_53/step_30000/diffusion_pytorch_model.safetensors
   config:
     activation_fn: gelu-approximate
     attention_bias: true
@@ -118,61 +116,60 @@ diffusion_model:
     patch_size_t: 1
     qk_norm: rms_norm_across_heads
     action_expert: true
-    ### we concatenate actions and states along the channel-dimension
-    action_in_channels: 15
-    action_out_channels: 15
+    ### we concatenate actions and states along the channel-dimension 14+14
+    action_in_channels: 28
     action_num_attention_heads: 16
     action_attention_head_dim: 32
     value_expert: false
-    value_in_channels: 10
+    value_in_channels: 17
     value_num_attention_heads: 16
     value_attention_head_dim: 32
-
 
 data:
   train:
     data_roots: ["lerobotlike_datasets"]
-    domains: ["libero"]
+    domains: ["fold_towel"]
     sample_size: [256, 256]
-    sample_n_frames: 500
+    sample_n_frames: 900
     preprocess :  'resize'
-    valid_cam :  ['image', 'wrist_image']
+    valid_cam :  ['observation.images.top_head', 'observation.images.hand_left', 'observation.images.hand_right']
     chunk: 9
-    action_chunk: 36
+    action_chunk: 54
     n_previous: 4
     previous_pick_mode: 'random'
     random_crop: False
     ignore_seek: False
+    dataset_info_cache_path: "lerobotlike_datasets/fold_towel/.cache/train.json"
     action_type: "absolute"
-    action_space: "eef"
-    stat_file: lerobotlike_datasets/libero/meta/stats.jsonl
-    state_key: state
-    action_key: actions
+    action_space: "joint"
+    stat_file: lerobotlike_datasets/fold_towel/meta/stats.jsonl
+    state_key: "observation.state"
+    action_key: action
     value_key: "state_value"
     value_dense: True
-    extra_parquet_index: False
+    repeat_dataset: 200
   val:
     data_roots: ["lerobotlike_datasets"]
-    domains: ["libero"]
+    domains: ["fold_towel"]
     sample_size: [256, 256]
-    sample_n_frames: 500
+    sample_n_frames: 900
     preprocess :  'resize'
-    valid_cam : ['image', 'wrist_image']
+    valid_cam :  ['observation.images.top_head', 'observation.images.hand_left', 'observation.images.hand_right']
     chunk: 9
-    action_chunk: 36
+    action_chunk: 54
     n_previous: 4
     previous_pick_mode: 'random'
     random_crop: False
     ignore_seek: False
+    dataset_info_cache_path: "lerobotlike_datasets/fold_towel/.cache/val.json"
     action_type: "absolute"
-    action_space: "eef"
-    stat_file: lerobotlike_datasets/libero/meta/stats.jsonl
-    state_key: state
-    action_key: actions
+    action_space: "joint"
+    stat_file: lerobotlike_datasets/fold_towel/meta/stats.jsonl
+    state_key: "observation.state"
+    action_key: action
     value_key: "state_value"
     value_dense: True
-    extra_parquet_index: False
-
+    repeat_dataset: 200
 
 use_color_jitter: true
 num_inference_step: 10

@@ -72,7 +72,7 @@ class CustomLeRobotDataset(Dataset):
         fix_sidx = None,
         fix_mem_idx = None,
         stat_file = None,
-    
+        repeat_dataset = None,
     ):
         """
         data_roots:              directory of LeRoBot dataset
@@ -168,6 +168,9 @@ class CustomLeRobotDataset(Dataset):
 
                     episode_index = episode_data['episode_index']
                     tasks = episode_data['tasks']
+                    if isinstance(tasks, str):
+                        tasks = [tasks]
+
                     if len(tasks) > 1:
                         task = random.choice(tasks)
                     else:
@@ -200,6 +203,9 @@ class CustomLeRobotDataset(Dataset):
             with open(dataset_info_cache_path, "w") as f:
                 json.dump(self.dataset, f)
 
+        if repeat_dataset is not None:
+            self.dataset *= repeat_dataset
+            
         self.length = len(self.dataset)
         zero_rank_print(f"data scale: {self.length}")
 
@@ -277,6 +283,8 @@ class CustomLeRobotDataset(Dataset):
             frame_indexes = action_indexes[::self.video_temporal_stride]
             action_indexes = np.clip(action_indexes, a_min=0, a_max=total_frames-1)
             frame_indexes = np.clip(frame_indexes, a_min=0, a_max=total_frames-1)
+            self.fix_mem_idx = np.clip(self.fix_mem_idx, a_min=0, a_max=total_frames-1)
+            self.fix_mem_idx = self.fix_mem_idx.tolist()
             action_indexes = action_indexes.tolist()
             frame_indexes = frame_indexes.tolist()
             return self.fix_mem_idx + frame_indexes, self.fix_mem_idx + action_indexes
@@ -421,10 +429,8 @@ class CustomLeRobotDataset(Dataset):
         parquet_path = self.dataset[idx][2]
         domain_name = self.dataset[idx][3]
         # domain_id = self.dataset[idx][4]
-        # domain_id = self.dataset[idx][4]
         caption = self.dataset[idx][6]
         total_frames = self.dataset[idx][7]
-        
         sample_size, specific_transforms_resize, specific_transforms_norm = self.get_transform()
         vid_indexes, indexes = self.get_frame_indexes(total_frames, )
         
@@ -541,4 +547,5 @@ class CustomLeRobotDataset(Dataset):
             state=state,
             value_targets=value,
         )
+        # print(sample["caption"])
         return sample

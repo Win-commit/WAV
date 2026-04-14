@@ -114,15 +114,6 @@ class RobotServer:
             prompt=prompt,
             state=state,
             execution_step=execution_step,
-            explore_config = {
-                "explore_steps": 1,
-                "dynamic_groups": 30,
-                "value_groups": 5,
-                "sigma_decay": 0.5,
-                "alpha_smooth": 0.9,
-                "value_elites": 0.1,
-                "dynamic_elites": 0.9,
-            },
             state_zeropadding=[14,0]
         )
         print(f"Action {action}")

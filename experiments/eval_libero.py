@@ -46,6 +46,26 @@ from utils import init_logging, import_custom_class, save_video
 from utils.data_utils import get_latents, get_text_conditions, gen_noise_from_condition_frame_latent, randn_tensor, apply_color_jitter_to_video
 
 
+DEFAULT_EXPLORE_CONFIG = {
+    "explore_steps": 5,
+    "dynamic_groups": 30,
+    "value_groups": 5,
+    "sigma_decay": 0.5,
+    "alpha_smooth": 0.9,
+    "value_elites": 0.1,
+    "dynamic_elites": 0.9,
+}
+
+
+def resolve_explore_config(config_explore_config=None, override_explore_config=None):
+    explore_config = deepcopy(DEFAULT_EXPLORE_CONFIG)
+    if isinstance(config_explore_config, dict):
+        explore_config.update(config_explore_config)
+    if isinstance(override_explore_config, dict):
+        explore_config.update(override_explore_config)
+    return explore_config
+
+
 class InferenceLibero:
     
     def __init__(self, config_file, output_dir=None, weight_dtype=torch.bfloat16, device="cuda:0", task_suite_name='libero_goal', model_path=None, exec_step=8, threshold=20, num_inference_steps=10,sub_folder=None) -> None:
@@ -53,6 +73,8 @@ class InferenceLibero:
         cd = load(open(config_file, "r"), Loader=Loader)
         args = argparse.Namespace(**cd)
         self.args = args
+        self.default_explore_config = resolve_explore_config(getattr(self.args, "explore_config", None))
+        self.args.explore_config = deepcopy(self.default_explore_config)
 
         if output_dir is not None:
             self.args.output_dir = output_dir
@@ -396,6 +418,7 @@ class InferenceLibero:
         obs_tensor = rearrange(obs_tensor, "b c v t h w -> (b v) c t h w")
 
         negative_prompt = ""
+        resolved_explore_config = resolve_explore_config(self.default_explore_config, explore_config)
         self.inference_call_idx += 1
         memory_tag = f"policy_infer_{self.inference_call_idx:05d}"
         self._reset_peak_memory_stats()
@@ -426,7 +449,7 @@ class InferenceLibero:
             return_dict=False,
             action_dim=self.action_dim,
             value_dim=self.args.diffusion_model["config"]["value_in_channels"],
-            explore_config=explore_config,
+            explore_config=resolved_explore_config,
         )[0]
         memory_after = self._log_memory(f"{memory_tag}_after", inference_peak=True)
         self._log_memory_delta(memory_tag, memory_before, memory_after)
@@ -616,20 +639,14 @@ if __name__ == "__main__":
     parser.add_argument("--num_trails_per_task", type=int, default=50, help="number of inference steps")
     parser.add_argument("--device", type=int, default=0, help="cuda id")
     parser.add_argument("--threshold", type=int, default=20, help="threshold")
-    parser.add_argument("--explore_steps",type=int, default=5)
+    parser.add_argument("--explore_steps",type=int, default=None)
     parser.add_argument("--task_ids",type=int, default=None)
     args = parser.parse_args()
     config_file = args.config_file
     output_dir = os.path.join(args.output_dir, args.task_suite_name)
-    explore_config = {
-                "explore_steps": args.explore_steps,
-                "dynamic_groups": 30,
-                "value_groups": 5,
-                "sigma_decay": 0.5,
-                "alpha_smooth": 0.9,
-                "value_elites": 0.1,
-                "dynamic_elites": 0.9,
-            }
+    explore_config = None
+    if args.explore_steps is not None:
+        explore_config = {"explore_steps": args.explore_steps}
 
 
     libero_infer = InferenceLibero(

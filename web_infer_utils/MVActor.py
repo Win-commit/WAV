@@ -21,6 +21,7 @@ import pdb
 import random
 from datetime import datetime
 import json
+from copy import deepcopy
 import numpy as np
 import torch
 import torchvision
@@ -42,6 +43,26 @@ from decord import VideoReader
 from typing import Any, Dict, List
 
 import json
+
+DEFAULT_EXPLORE_CONFIG = {
+    "explore_steps": 1,
+    "dynamic_groups": 30,
+    "value_groups": 5,
+    "sigma_decay": 0.5,
+    "alpha_smooth": 0.9,
+    "value_elites": 0.1,
+    "dynamic_elites": 0.9,
+}
+
+
+def resolve_explore_config(config_explore_config=None, override_explore_config=None):
+    explore_config = deepcopy(DEFAULT_EXPLORE_CONFIG)
+    if isinstance(config_explore_config, dict):
+        explore_config.update(config_explore_config)
+    if isinstance(override_explore_config, dict):
+        explore_config.update(override_explore_config)
+    return explore_config
+
 
 class MVActor:
     def __init__(
@@ -68,6 +89,8 @@ class MVActor:
 
         cd = load(open(config_file, "r"), Loader=Loader)
         args = argparse.Namespace(**cd)
+        self.default_explore_config = resolve_explore_config(getattr(args, "explore_config", None))
+        args.explore_config = deepcopy(self.default_explore_config)
 
         self.action_type = args.data["train"]["action_type"]
         self.action_space = args.data["train"]["action_space"]
@@ -328,6 +351,7 @@ class MVActor:
 
 
         negative_prompt = ''
+        resolved_explore_config = resolve_explore_config(self.default_explore_config, explore_config)
 
         pred_all = self.pipeline.infer(
             image=obs_tensor,
@@ -355,7 +379,7 @@ class MVActor:
             return_dict=False,
             action_dim=self.args.diffusion_model["config"]["action_in_channels"],
             value_dim=self.args.diffusion_model["config"]["value_in_channels"],
-            explore_config=explore_config,
+            explore_config=resolved_explore_config,
         )[0]
 
         ### 1,t,c

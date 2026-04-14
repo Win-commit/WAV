@@ -32,10 +32,20 @@ pipeline_class: CustomPipeline
 return_action: true
 return_video: false
 return_value: true
-exploration: true
 train_mode: 'action_full'
 action_loss_scale: 1.0
 value_loss_scale: 1.0
+
+#Explore config
+exploration: true
+explore_config:
+  explore_steps: 1
+  dynamic_groups: 30
+  value_groups: 5
+  sigma_decay: 0.5
+  alpha_smooth: 0.9
+  value_elites: 0.1
+  dynamic_elites: 0.9
 
 # total training step is decided by the minimum of the below two
 train_steps: 30000

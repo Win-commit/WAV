@@ -32,7 +32,6 @@ EGL_DEVICE_ID=$gpu python  experiments/eval_libero.py \
     --device $gpu \
     --num_trails_per_task 50 \
     --task_ids 0 \
-    --explore_steps 7 \
     --threshold 1
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
 export WANDB_BASE_URL="https://api.bandw.top"
-API_KEY=bf924aa39303a0d8808787e3777696c3626d4850
+API_KEY=
 wandb login $API_KEY
 
 script_path=${1}

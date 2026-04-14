@@ -22,7 +22,7 @@ Instead of planning directly in action space, VLA-Planning performs iterative in
 - Support for **LIBERO closed-loop evaluation**, open-loop validation, and **real-world deployment**.
 ## TODO
 - [x] Release inference & training code
-- [x] Release model weights
+- [] Release model weights
 
 ## Method Overview
 

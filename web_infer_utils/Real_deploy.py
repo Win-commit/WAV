@@ -220,14 +220,14 @@ def main():
     parser.add_argument(
         '-c', '--config',
         type=str,
-        default='configs/ltx_model/robotwin/policy_model_rel_joint_robotwin.yaml',
+        default='',
         help='Path to the YAML model config'
     )
 
     parser.add_argument(
         '-w', '--weight',
         type=str,
-        default='/defaultShare/Genie-Envisioner/lrz_training_v2/robotwin4/Phase3_PolicyModel_WOV_rel_joint_54/2026_02_22_19_12_11/step_20000/diffusion_pytorch_model.safetensors',
+        default='',
         help='Path to the model weight'
     )
 
@@ -236,7 +236,7 @@ def main():
     parser.add_argument('-p', '--port', type=int, default=8001, help='Server port')
 
     # Model parameters
-    parser.add_argument('--domain_name', type=str, default='robotwin', help='Domain name')
+    parser.add_argument('--domain_name', type=str, default='', help='Domain name')
     parser.add_argument('--threshold', type=float, default=1, help='Memory update threshold')
     parser.add_argument('--denoise_step', type=int, default=10, help='Denoising steps')
     parser.add_argument('--action_dim', type=int, default=14, help='Action dimension')

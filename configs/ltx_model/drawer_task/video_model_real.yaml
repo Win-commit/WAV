@@ -1,10 +1,10 @@
 model_name: 'ltx_train'
 is_i2v: True
 report_to: wandb
-tracker_name: Phase2_ValueModel_fold_towel_big
+tracker_name: PROJECT_NAME
 
 logging_dir: logs
-output_dir: lrz_training_v2/fold_towel/Phase2_ValueModel
+output_dir: PATH/TO/YOUR/OUTPUT
 pretrained_model_name_or_path: pretrained_models/LTX_video_part
 
 ###
@@ -28,18 +28,18 @@ diffusion_scheduler_class: FlowMatchEulerDiscreteScheduler
 pipeline_class_path: models/pipeline/custom_pipeline.py
 pipeline_class: CustomPipeline
 
-#
+# 
 return_action: false
-return_video: false
-return_value: true
+return_video: true
+return_value: false
 exploration: false
-train_mode: 'value_only'  # 支持: video_only, action_only, value_only, value_action, all, action_full
+train_mode: 'video_only'
 action_loss_scale: 1.0
 value_loss_scale: 1.0
 
 # total training step is decided by the minimum of the below two
-train_steps: 100000
-train_epochs: 100000
+train_steps: 1000000
+train_epochs: 10000
 steps_to_save: 10000
 steps_to_log: 20
 steps_to_val: 2000
@@ -55,9 +55,9 @@ seed: 42
 enable_slicing: True
 enable_tiling: True
 
-add_state: False ### whether add state to the action chunk
+add_state: False
 
-caption_dropout_p: 0.00
+caption_dropout_p: 0.06
 
 # dataloader
 batch_size: 16
@@ -69,7 +69,7 @@ noise_to_first_frame: 0.1
 
 # Optimizer Config
 optimizer: adamw
-lr: 5e-5
+lr: 3e-4
 beta1: 0.9
 beta2: 0.95
 beta3: 0.999
@@ -98,7 +98,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: lrz_training_v2/fold_towel/Phase1_VideoAdapter/2026_03_17_12_33_53/step_50000/diffusion_pytorch_model.safetensors
+  model_path: pretrained_models/GE_base/GE_base_fast_v0.1.safetensors
   config:
     activation_fn: gelu-approximate
     attention_bias: true
@@ -119,7 +119,7 @@ diffusion_model:
     action_in_channels: 14
     action_num_attention_heads: 16
     action_attention_head_dim: 32
-    value_expert: true
+    value_expert: false
     value_in_channels: 17
     value_num_attention_heads: 16
     value_attention_head_dim: 32
@@ -127,9 +127,9 @@ diffusion_model:
 data:
   train:
     data_roots: ["lerobotlike_datasets"]
-    domains: ["fold_towel"]
+    domains: ["place_3"]
     sample_size: [256, 256]
-    sample_n_frames: 300
+    sample_n_frames: 900
     preprocess :  'resize'
     valid_cam :  ['observation.images.top_head', 'observation.images.hand_left', 'observation.images.hand_right']
     chunk: 9
@@ -138,20 +138,20 @@ data:
     previous_pick_mode: 'random'
     random_crop: False
     ignore_seek: False
-    dataset_info_cache_path: "lerobotlike_datasets/fold_towel/.cache/train.json"
+    dataset_info_cache_path: "lerobotlike_datasets/place_3/.cache/train.json"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: lerobotlike_datasets/fold_towel/meta/stats.jsonl
+    stat_file: lerobotlike_datasets/place_3/meta/stats.jsonl
     state_key: "observation.state"
     action_key: action
     value_key: "state_value"
     value_dense: True
-    repeat_dataset: 1
+    repeat_dataset: 200
   val:
     data_roots: ["lerobotlike_datasets"]
-    domains: ["fold_towel"]
+    domains: ["place_3"]
     sample_size: [256, 256]
-    sample_n_frames: 300
+    sample_n_frames: 900
     preprocess :  'resize'
     valid_cam :  ['observation.images.top_head', 'observation.images.hand_left', 'observation.images.hand_right']
     chunk: 9
@@ -160,15 +160,15 @@ data:
     previous_pick_mode: 'random'
     random_crop: False
     ignore_seek: False
-    dataset_info_cache_path: "lerobotlike_datasets/fold_towel/.cache/val.json"
+    dataset_info_cache_path: "lerobotlike_datasets/place_3/.cache/val.json"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: lerobotlike_datasets/fold_towel/meta/stats.jsonl
+    stat_file: lerobotlike_datasets/place_3/meta/stats.jsonl
     state_key: "observation.state"
     action_key: action
     value_key: "state_value"
     value_dense: True
-    repeat_dataset: 1
+    repeat_dataset: 200
 
 use_color_jitter: true
 num_inference_step: 10

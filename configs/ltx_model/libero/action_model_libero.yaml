@@ -1,10 +1,10 @@
 model_name: 'ltx_train'
 is_i2v: True
 report_to: wandb
-tracker_name: Phase3_PolicyModel_WOV_absolute_eef_libero
+tracker_name: PROJECT_NAME
 
 logging_dir: logs
-output_dir: lrz_training_v2/libero/Phase3_PolicyModel_WOV_absolute_eef
+output_dir: PATH/TO/YOUR/OUTPUT
 pretrained_model_name_or_path: pretrained_models/LTX_video_part
 
 
@@ -32,11 +32,22 @@ pipeline_class: CustomPipeline
 # 
 return_action: true
 return_video: false
-return_value: false
-exploration: false
-train_mode: 'action_full'  # 支持: video_only, action_only, value_only, value_action, all, action_full
+return_value: true
+train_mode: 'action_full'  # video_only, action_only, value_only, value_action, all, action_full
 action_loss_scale: 1.0
 value_loss_scale: 1.0
+
+#Explore config
+exploration: true
+explore_config:
+  explore_steps: 5
+  dynamic_groups: 30
+  value_groups: 5
+  sigma_decay: 0.5
+  alpha_smooth: 0.9
+  value_elites: 0.1
+  dynamic_elites: 0.9
+
 
 # total training step is decided by the minimum of the below two
 train_steps: 1000000
@@ -100,7 +111,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: lrz_training_v2/libero/Phase1_VideoAdapter/2026_02_07_17_38_14/step_30000/diffusion_pytorch_model.safetensors
+  model_path: PATH/TO/YOUR/MODEL/CHECKPOINT
   config:
     activation_fn: gelu-approximate
     attention_bias: true
@@ -123,7 +134,7 @@ diffusion_model:
     action_out_channels: 15
     action_num_attention_heads: 16
     action_attention_head_dim: 32
-    value_expert: false
+    value_expert: true
     value_in_channels: 10
     value_num_attention_heads: 16
     value_attention_head_dim: 32

@@ -1,10 +1,10 @@
 model_name: 'ltx_train'
 is_i2v: True
 report_to: wandb
-tracker_name: Phase2_ValueModel_place3
+tracker_name: PROJECT_NAME
 
 logging_dir: logs
-output_dir: lrz_training_v2/place3/Phase2_ValueModel
+output_dir: PATH/TO/YOUR/OUTPUT
 pretrained_model_name_or_path: pretrained_models/LTX_video_part
 
 ###
@@ -33,7 +33,7 @@ return_action: false
 return_video: false
 return_value: true
 exploration: false
-train_mode: 'value_only'  # 支持: video_only, action_only, value_only, value_action, all, action_full
+train_mode: 'value_only'  # video_only, action_only, value_only, value_action, all, action_full
 action_loss_scale: 1.0
 value_loss_scale: 1.0
 
@@ -98,7 +98,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: lrz_training_v2/place3/Phase1_VideoAdapter/2026_03_11_00_57_54/step_60000/diffusion_pytorch_model.safetensors
+  model_path: PATH/TO/YOUR/MODEL/CHECKPOINT
   config:
     activation_fn: gelu-approximate
     attention_bias: true

@@ -1,16 +1,16 @@
 model_name: 'ltx_train'
 is_i2v: True
 report_to: wandb
-tracker_name: Phase3_PolicyModel_WV_absolute_joint_WState_place3
+tracker_name: PROJECT_NAME
 
 logging_dir: logs
-output_dir: lrz_training_v2/place3/Phase3_PolicyModel_WV_absolute_joint_WState
+output_dir: PATH/TO/YOUR/OUTPUT
 pretrained_model_name_or_path: pretrained_models/LTX_video_part
 
 ###
-train_data_class_path: data/libero_dataset.py
+train_data_class_path: data/lerobot_like_dataset.py
 train_data_class: CustomLeRobotDataset
-val_data_class_path: data/libero_dataset.py
+val_data_class_path: data/lerobot_like_dataset.py
 val_data_class: CustomLeRobotDataset
 
 ### 
@@ -28,31 +28,21 @@ diffusion_scheduler_class: FlowMatchEulerDiscreteScheduler
 pipeline_class_path: models/pipeline/custom_pipeline.py
 pipeline_class: CustomPipeline
 
-# 
-return_action: true
+#
+return_action: false
 return_video: false
 return_value: true
-train_mode: 'action_full'
+exploration: false
+train_mode: 'value_only'  # video_only, action_only, value_only, value_action, all, action_full
 action_loss_scale: 1.0
 value_loss_scale: 1.0
 
-#Explore config
-exploration: true
-explore_config:
-  explore_steps: 1
-  dynamic_groups: 30
-  value_groups: 5
-  sigma_decay: 0.5
-  alpha_smooth: 0.9
-  value_elites: 0.1
-  dynamic_elites: 0.9
-
 # total training step is decided by the minimum of the below two
-train_steps: 30000
-train_epochs: 10000
-steps_to_save: 3000
+train_steps: 100000
+train_epochs: 100000
+steps_to_save: 10000
 steps_to_log: 20
-steps_to_val: 200000
+steps_to_val: 2000
 
 mixed_precision: bf16
 allow_tf32: False
@@ -65,9 +55,9 @@ seed: 42
 enable_slicing: True
 enable_tiling: True
 
-add_state: True
+add_state: False ### whether add state to the action chunk
 
-caption_dropout_p: 0.0
+caption_dropout_p: 0.00
 
 # dataloader
 batch_size: 16
@@ -79,7 +69,7 @@ noise_to_first_frame: 0.1
 
 # Optimizer Config
 optimizer: adamw
-lr: 3e-4
+lr: 5e-5
 beta1: 0.9
 beta2: 0.95
 beta3: 0.999
@@ -108,7 +98,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: lrz_training_v2/place3/Phase2_ValueModel/2026_03_12_21_38_21/step_20000/diffusion_pytorch_model.safetensors
+  model_path: PATH/TO/YOUR/MODEL/CHECKPOINT
   config:
     activation_fn: gelu-approximate
     attention_bias: true
@@ -125,9 +115,8 @@ diffusion_model:
     patch_size: 1
     patch_size_t: 1
     qk_norm: rms_norm_across_heads
-    action_expert: true
-    ### we concatenate actions and states along the channel-dimension 14+14
-    action_in_channels: 28
+    action_expert: false
+    action_in_channels: 14
     action_num_attention_heads: 16
     action_attention_head_dim: 32
     value_expert: true
@@ -138,7 +127,7 @@ diffusion_model:
 data:
   train:
     data_roots: ["lerobotlike_datasets"]
-    domains: ["place_3"]
+    domains: ["orangize_bowls_cups"]
     sample_size: [256, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -149,18 +138,18 @@ data:
     previous_pick_mode: 'random'
     random_crop: False
     ignore_seek: False
-    dataset_info_cache_path: "lerobotlike_datasets/place_3/.cache/train.json"
+    dataset_info_cache_path: "lerobotlike_datasets/orangize_bowls_cups/.cache/train.json"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: lerobotlike_datasets/place_3/meta/stats.jsonl
+    stat_file: lerobotlike_datasets/orangize_bowls_cups/meta/stats.jsonl
     state_key: "observation.state"
     action_key: action
     value_key: "state_value"
     value_dense: True
-    repeat_dataset: 20
+    repeat_dataset: 200
   val:
     data_roots: ["lerobotlike_datasets"]
-    domains: ["place_3"]
+    domains: ["orangize_bowls_cups"]
     sample_size: [256, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -171,16 +160,16 @@ data:
     previous_pick_mode: 'random'
     random_crop: False
     ignore_seek: False
-    dataset_info_cache_path: "lerobotlike_datasets/place_3/.cache/val.json"
+    dataset_info_cache_path: "lerobotlike_datasets/orangize_bowls_cups/.cache/val.json"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: lerobotlike_datasets/place_3/meta/stats.jsonl
+    stat_file: lerobotlike_datasets/orangize_bowls_cups/meta/stats.jsonl
     state_key: "observation.state"
     action_key: action
     value_key: "state_value"
     value_dense: True
-    repeat_dataset: 20
-
+    repeat_dataset: 200
+    
 use_color_jitter: true
 num_inference_step: 10
 noisy_video: true

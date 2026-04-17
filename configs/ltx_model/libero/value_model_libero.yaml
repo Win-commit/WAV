@@ -1,10 +1,10 @@
 model_name: 'ltx_train'
 is_i2v: True
 report_to: wandb
-tracker_name: Phase2_ValueModel_libero
+tracker_name: PROJECT_NAME
 
 logging_dir: logs
-output_dir: lrz_training_v2/libero/Phase2_ValueModel
+output_dir: PATH/TO/YOUR/OUTPUT
 pretrained_model_name_or_path: pretrained_models/LTX_video_part
 
 
@@ -100,7 +100,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: lrz_training_v2/libero/Phase1_VideoAdapter/2026_02_07_17_38_14/step_30000/diffusion_pytorch_model.safetensors
+  model_path: PATH/TO/YOUR/MODEL/CHECKPOINT
   config:
     activation_fn: gelu-approximate
     attention_bias: true

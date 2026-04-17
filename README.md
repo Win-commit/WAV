@@ -1,17 +1,17 @@
-# VLA-Planning: World-Model Predictive Control for Vision-Language-Action Models
+# World-Value-Action Model: Implicit Planning for Vision-Language-Action Systems
 
 <div id="top" align="center">
 
 ![Teaser](figs/vla_mpc_overview_1.png)
 
-<a href='NeurIPS_2026_model_based.pdf'><img src='https://img.shields.io/badge/Paper-Draft-red'></a> &nbsp;
-<img src='https://img.shields.io/badge/Site-Research%20Release-blue'>
+<a href='https://arxiv.org/abs/2604.14732'><img src='https://img.shields.io/badge/Paper-arxiv-red'></a> &nbsp;
+<a href='https://arxiv.org/abs/2604.14732'><img src='https://img.shields.io/badge/Site-Research%20Release-blue'>
 
 </div>
 
-This repository contains the implementation of **VLA-Planning**, a world-model-based  framework. The central idea is to unify **instruction-conditioned video prediction**, **trajectory value estimation**, **action decoding**, and **latent trajectory planning** within a single multi-view diffusion transformer for long-horizon robotic manipulation.
+This repository contains the implementation of **World-Value-Action Model(WAV)**, a world-model-based  framework. The central idea is to unify **instruction-conditioned video prediction**, **trajectory value estimation**, **action decoding**, and **latent trajectory planning** within a single multi-view diffusion transformer for long-horizon robotic manipulation.
 
-Instead of planning directly in action space, VLA-Planning performs iterative inference in a compact latent trajectory space. This design biases sampling toward feasible futures, allows trajectory-level evaluation before action execution, and improves long-horizon decision making in both simulated and real-world settings.
+Instead of planning directly in action space, WAV performs iterative inference in a compact latent trajectory space. This design biases sampling toward feasible futures, allows trajectory-level evaluation before action execution, and improves long-horizon decision making in both simulated and real-world settings.
 
 
 ## Highlights
@@ -22,13 +22,13 @@ Instead of planning directly in action space, VLA-Planning performs iterative in
 - Support for **LIBERO closed-loop evaluation**, open-loop validation, and **real-world deployment**.
 ## TODO
 - [x] Release inference & training code
-- [] Release model weights
+- [ ] Release model weights
 
 ## Method Overview
 
 ### Motivation
 
-Direct action prediction is often insufficient for long-horizon embodied tasks because it provides limited trajectory-level reasoning. VLA-Planning addresses this by first imagining future visual trajectories, then evaluating their long-horizon quality, and finally decoding executable robot actions from optimized trajectory features.
+Direct action prediction is often insufficient for long-horizon embodied tasks because it provides limited trajectory-level reasoning. WAV addresses this by first imagining future visual trajectories, then evaluating their long-horizon quality, and finally decoding executable robot actions from optimized trajectory features.
 
 The current paper motivates this design from a model-based planning perspective:
 
@@ -39,7 +39,7 @@ The current paper motivates this design from a model-based planning perspective:
 
 ### Architecture
 
-VLA-Planning decomposes planning and control into three tightly coupled modules:
+WAV decomposes planning and control into three tightly coupled modules:
 
 1. **Instruction-conditioned video generation.**
    A multi-view diffusion transformer predicts future visual trajectories conditioned on history frames and language instructions.

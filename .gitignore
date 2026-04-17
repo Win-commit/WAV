@@ -195,3 +195,5 @@ experiments/calvin_eval_sequences.json
 experiments/eval_calvin.py
 experiments/eval_calvin.sh
 experiments/RUN.md
+
+crl-wav/

@@ -74,11 +74,11 @@ WAV decomposes planning and control into three tightly coupled modules:
 ### Setup
 
 ```bash
-git clone https://github.com/Win-commit/VLA-Planning.git
-cd VLA-Planning
+git clone https://github.com/Win-commit/WAV.git
+cd WAV
 
-conda create -n vla_planning python=3.10.4
-conda activate vla_planning
+conda create -n wav python=3.10.4
+conda activate wav
 pip install -r requirements.txt
 ```
 

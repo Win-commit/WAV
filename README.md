@@ -5,7 +5,7 @@
 ![Teaser](figs/vla_mpc_overview_1.png)
 
 <a href='https://arxiv.org/abs/2604.14732'><img src='https://img.shields.io/badge/Paper-arxiv-red'></a> &nbsp;
-<a href='https://arxiv.org/abs/2604.14732'><img src='https://img.shields.io/badge/Site-Research%20Release-blue'>
+<a href='https://win-commit.github.io/wavpage/'><img src='https://img.shields.io/badge/Site-WAV-blue'>
 
 </div>
 

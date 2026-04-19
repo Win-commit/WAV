@@ -332,3 +332,11 @@ This codebase builds on the current [`Genie-Envisioner`](https://github.com/Agib
 ## Citation
 
 If you find this project useful, please consider citing the paper once the public version is released.
+```
+@article{li2026world,
+  title={World-Value-Action Model: Implicit Planning for Vision-Language-Action Systems},
+  author={Li, Runze and Zhang, Hongyin and Jin, Junxi and Zeng, Qixin and Zhuang, Zifeng and Tang, Yiqi and Lyu, Shangke and Wang, Donglin},
+  journal={arXiv preprint arXiv:2604.14732},
+  year={2026}
+}
+```
